@@ -459,6 +459,69 @@ router.post('/api/profiles/list-all', async (req, res) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// REAL COOKIE IMPORT — store/retrieve/clear
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const STORED_COOKIES_FILE = path.join(__dirname, '..', '..', 'youtube-cookies.json');
+
+/** GET /api/cookies/status — how many cookies saved, when last imported */
+router.get('/api/cookies/status', (req, res) => {
+  try {
+    if (!fs.existsSync(STORED_COOKIES_FILE)) {
+      return res.json({ hasCookies: false, count: 0, importedAt: null });
+    }
+    const data = JSON.parse(fs.readFileSync(STORED_COOKIES_FILE, 'utf8'));
+    const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+    res.json({
+      hasCookies: cookies.length > 0,
+      count: cookies.length,
+      importedAt: data.importedAt || null,
+      domains: [...new Set(cookies.map(c => c.domain).filter(Boolean))].slice(0, 10),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/cookies/import — save real cookies from Chrome Cookie-Editor export */
+router.post('/api/cookies/import', (req, res) => {
+  try {
+    const { cookies } = req.body || {};
+    if (!Array.isArray(cookies) || cookies.length === 0) {
+      return res.status(400).json({ success: false, error: 'cookies array is required and must not be empty' });
+    }
+    // Basic validation — each cookie must have at least name + domain
+    const valid = cookies.filter(c => c && typeof c === 'object' && c.name && c.domain);
+    if (valid.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid cookies found (each needs name + domain)' });
+    }
+    const payload = {
+      cookies: valid,
+      importedAt: Date.now(),
+      count: valid.length,
+    };
+    fs.writeFileSync(STORED_COOKIES_FILE, JSON.stringify(payload, null, 2));
+    console.log(`[CookieStore] Saved ${valid.length} real cookies from Cookie-Editor import`);
+    res.json({ success: true, count: valid.length, importedAt: payload.importedAt });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/** DELETE /api/cookies/clear — remove all stored cookies */
+router.delete('/api/cookies/clear', (req, res) => {
+  try {
+    if (fs.existsSync(STORED_COOKIES_FILE)) {
+      fs.unlinkSync(STORED_COOKIES_FILE);
+    }
+    console.log('[CookieStore] Stored cookies cleared');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ERROR CODE → HTTP STATUS MAPPING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

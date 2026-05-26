@@ -24,6 +24,8 @@
  * @module ProfileCreator
  */
 
+const fs = require('fs');
+const path = require('path');
 const proxyRotator = require('./ProxyRotator.cjs');
 const GeoIPResolver = require('./GeoIPResolver.cjs');
 const FingerprintGenerator = require('./FingerprintGenerator.cjs');
@@ -32,6 +34,9 @@ const { providerFactory, VALID_PROVIDERS } = require('../providers/ProviderFacto
 const { FULL_STATE_TIMEZONE_MAP } = require('./fingerprintData.cjs');
 const { normalizeProxyCountry, geoForProxyCountry } = require('./proxyCountry.cjs');
 const { normalizeProxyType, isMultiloginProxyType, isSmartProxyType } = require('./proxyType.cjs');
+
+// Path to stored real cookies (imported via Settings UI)
+const STORED_COOKIES_FILE = path.resolve(__dirname, '..', '..', 'youtube-cookies.json');
 
 // Valid OS options
 const VALID_OS = ['Windows', 'macOS', 'Android'];
@@ -299,14 +304,22 @@ class ProfileCreator {
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // Step 7: Import cookies (non-blocking — failure doesn't prevent creation)
+    // Auto-loads real cookies stored via Settings → Cookie Import
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let cookiesImported = false;
 
-    if (cookies && Array.isArray(cookies) && cookies.length > 0 && profileId) {
+    // Merge: stored real cookies (from Settings) + any cookies passed in options
+    const storedCookies = this._loadStoredCookies();
+    const allCookies = [...storedCookies, ...(Array.isArray(cookies) ? cookies : [])];
+
+    if (allCookies.length > 0 && profileId) {
+      if (storedCookies.length > 0) {
+        console.log(`[ProfileCreator] Injecting ${storedCookies.length} stored real cookies + ${(cookies || []).length} custom cookies`);
+      }
       try {
         const CookieImporter = require('./CookieImporter.cjs');
         const cookieImporter = new CookieImporter();
-        const cookieResult = await cookieImporter.importCookies(profileId, browserType, cookies);
+        const cookieResult = await cookieImporter.importCookies(profileId, browserType, allCookies);
         cookiesImported = cookieResult.cookiesImported || false;
       } catch (err) {
         console.warn(`[ProfileCreator] Cookie import failed for profile ${profileId}: ${err.message}`);
@@ -481,6 +494,22 @@ class ProfileCreator {
           }
         });
     });
+  }
+
+  /**
+   * Load real cookies stored via Settings → Cookie Import.
+   * Returns empty array if no cookies saved or file missing/corrupt.
+   * @returns {Array}
+   * @private
+   */
+  _loadStoredCookies() {
+    try {
+      if (!fs.existsSync(STORED_COOKIES_FILE)) return [];
+      const data = JSON.parse(fs.readFileSync(STORED_COOKIES_FILE, 'utf8'));
+      return Array.isArray(data.cookies) ? data.cookies : [];
+    } catch {
+      return [];
+    }
   }
 }
 

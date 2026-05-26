@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import {
   Save, RefreshCw, Globe, Database, Server, Shield, Eye, EyeOff, Monitor, Key, Folder,
   Download, Upload, Zap, ExternalLink, Brain, Bell, Send, Trash2, Maximize2, Cookie, Search,
+  CheckCircle2, XCircle, LogIn,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import type { BrowserProvider, ProviderSelection } from '../services/browserProviderApi';
@@ -57,11 +58,23 @@ export default function SettingsPage() {
   const [emptyingTrash, setEmptyingTrash] = useState(false);
   const [trashActionMsg, setTrashActionMsg] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  // Real cookie import state
+  const [cookieJson, setCookieJson] = useState('');
+  const [cookieStatus, setCookieStatus] = useState<{ hasCookies: boolean; count: number; importedAt: number | null; domains?: string[] } | null>(null);
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieMsg, setCookieMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const providerSynced = useRef(false);
 
   const refreshConcurrency = useCallback(async () => {
     const c = await fetchConcurrency();
     if (c) setConcurrency(c);
+  }, []);
+
+  const refreshCookieStatus = useCallback(async () => {
+    try {
+      const res = await backendFetch('/api/cookies/status', { headers: getAuthHeaders() });
+      if (res.ok) setCookieStatus(await res.json());
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -87,10 +100,11 @@ export default function SettingsPage() {
         setBackendStatus('error');
       }
       await refreshConcurrency();
+      await refreshCookieStatus();
     })();
     const t = setInterval(refreshConcurrency, 10000);
     return () => clearInterval(t);
-  }, [browserProvider, setBrowserProvider, refreshConcurrency]);
+  }, [browserProvider, setBrowserProvider, refreshConcurrency, refreshCookieStatus]);
 
   const update = <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => {
     setSettings((s) => ({ ...s, [key]: val }));
@@ -819,6 +833,107 @@ export default function SettingsPage() {
               </div>
             )}
             <p className="text-xs text-gray-500">After warmup searches, the agent still finds and verifies the exact video as normal. Direct URL fallback remains last resort only.</p>
+          </div>
+        </Section>
+
+        {/* Real Cookie Import */}
+        <Section
+          title="Real Cookie Import (Anti-Bot)"
+          icon={<LogIn size={15} className="text-green-400" />}
+          note="Import real cookies from your Chrome browser. These cookies are automatically injected into every new profile — making it look like a real, trusted user to YouTube."
+        >
+          <div className="space-y-4">
+            {/* Status bar */}
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${cookieStatus?.hasCookies ? 'bg-green-950/40 border-green-700/50' : 'bg-gray-800/60 border-gray-700'}`}>
+              {cookieStatus?.hasCookies
+                ? <CheckCircle2 size={16} className="text-green-400 shrink-0" />
+                : <XCircle size={16} className="text-gray-500 shrink-0" />}
+              <div className="flex-1 min-w-0">
+                {cookieStatus?.hasCookies ? (
+                  <p className="text-sm text-green-300 font-medium">
+                    {cookieStatus.count} cookies saved
+                    {cookieStatus.importedAt ? ` · imported ${new Date(cookieStatus.importedAt).toLocaleDateString('en-IN')}` : ''}
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-400">No cookies saved — profiles will use default empty state</p>
+                )}
+                {cookieStatus?.domains && cookieStatus.domains.length > 0 && (
+                  <p className="text-xs text-gray-500 truncate mt-0.5">Domains: {cookieStatus.domains.join(', ')}</p>
+                )}
+              </div>
+              {cookieStatus?.hasCookies && (
+                <button
+                  type="button"
+                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded border border-red-800/40 hover:border-red-600/60 shrink-0"
+                  onClick={async () => {
+                    await backendFetch('/api/cookies/clear', { method: 'DELETE', headers: getAuthHeaders() });
+                    setCookieStatus({ hasCookies: false, count: 0, importedAt: null });
+                    setCookieMsg({ ok: true, text: 'Cookies cleared.' });
+                    setTimeout(() => setCookieMsg(null), 3000);
+                  }}
+                >Clear</button>
+              )}
+            </div>
+
+            {/* How to export */}
+            <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4 text-xs text-gray-400 space-y-1">
+              <p className="text-gray-300 font-medium mb-2">How to export from Chrome:</p>
+              <p>1. Install <span className="text-white">Cookie-Editor</span> extension from Chrome Web Store (free)</p>
+              <p>2. Open Chrome → visit <span className="text-white">youtube.com</span> &amp; <span className="text-white">google.com</span> → browse 5–10 min normally</p>
+              <p>3. Click Cookie-Editor icon → <span className="text-white">Export → JSON</span></p>
+              <p>4. Paste the JSON below → Save</p>
+            </div>
+
+            {/* JSON paste area */}
+            <div>
+              <label className="text-gray-400 text-xs font-medium block mb-2">Paste Cookie JSON here</label>
+              <textarea
+                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-300 font-mono resize-none focus:outline-none focus:border-gray-500 placeholder-gray-600"
+                rows={6}
+                placeholder={'[\n  { "name": "CONSENT", "value": "YES+...", "domain": ".youtube.com", ... },\n  ...\n]'}
+                value={cookieJson}
+                onChange={e => setCookieJson(e.target.value)}
+              />
+            </div>
+
+            {cookieMsg && (
+              <p className={`text-xs font-medium ${cookieMsg.ok ? 'text-green-400' : 'text-red-400'}`}>{cookieMsg.text}</p>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                disabled={cookieSaving || !cookieJson.trim()}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white text-sm font-medium"
+                onClick={async () => {
+                  setCookieSaving(true);
+                  setCookieMsg(null);
+                  try {
+                    const parsed = JSON.parse(cookieJson.trim());
+                    const arr = Array.isArray(parsed) ? parsed : [parsed];
+                    const res = await backendFetch('/api/cookies/import', {
+                      method: 'POST',
+                      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ cookies: arr }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                      setCookieMsg({ ok: true, text: `✅ ${data.count} cookies saved! Will be auto-injected into all new profiles.` });
+                      setCookieJson('');
+                      await refreshCookieStatus();
+                    } else {
+                      setCookieMsg({ ok: false, text: data.error || 'Save failed' });
+                    }
+                  } catch (e: any) {
+                    setCookieMsg({ ok: false, text: `Invalid JSON: ${e.message}` });
+                  }
+                  setCookieSaving(false);
+                }}
+              >
+                <Save size={14} />
+                {cookieSaving ? 'Saving…' : 'Save Cookies'}
+              </button>
+            </div>
           </div>
         </Section>
 
