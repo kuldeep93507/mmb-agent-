@@ -1,0 +1,92 @@
+{
+  "name": "mmb-agent-247",
+  "private": true,
+  "version": "1.5.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "author": "Kuldeep Prajapati",
+  "description": "MMB Agent 24/7 — YouTube Growth Automation",
+  "scripts": {
+    "dev": "vite --host",
+    "server": "node server/index.cjs",
+    "watchdog": "node server/watchdog.cjs",
+    "test:youtube-ui-smoke": "node server/scripts/youtube-ui-smoke.cjs",
+    "test:full-bot": "node server/scripts/full-bot-smoke-test.cjs",
+    "test:traffic-qa": "node server/scripts/e2e-traffic-qa.cjs",
+    "test:antidetect": "node server/scripts/audit-antidetect-4.cjs",
+    "start": "concurrently \"npm run dev\" \"npm run server\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron": "electron .",
+    "electron:dev": "concurrently \"npm run dev\" \"npm run server\" \"electron .\"",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "test": "jest --testPathPatterns=server/tests",
+    "test:bugs": "jest --config jest.exploratory.config.cjs"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "dotenv": "^16.5.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "lucide-react": "^1.14.0",
+    "nanoid": "^5.1.11",
+    "playwright-core": "^1.60.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "concurrently": "^9.2.1",
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
+    "fast-check": "^4.8.0",
+    "jest": "^30.4.2",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.2",
+    "vite-plugin-singlefile": "2.3.0"
+  },
+  "build": {
+    "appId": "com.mmb.agent247",
+    "productName": "MMB Agent 24/7",
+    "copyright": "Copyright © 2026 Kuldeep Prajapati",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "server",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "electron/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "electron/icon.png",
+      "uninstallerIcon": "electron/icon.png",
+      "installerHeaderIcon": "electron/icon.png",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MMB Agent 24/7"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+node_modules/
+dist/
+release/
+.env
+*.env
+analytics_data.json
+watch_history.json
+activity_logs.json
+user-settings.json
+backlinks_data.json
+shuffle_data.json
+profiles_data.json
+profile_configs_data.json
+comments_data.json
+channels_data.json
+.api-token
+schedules_data.json
+*.log
+.DS_Store
+Thumbs.db
+*.zip
+*.pdf
+
+# Local / machine-specific (Sites tool)
+agent_states.json
+audit-*.json
+canvas-audit*.json
+full-test-report.json
+health_stats.json
+multilogin-proxy-ip-test.json
+recycle_state.json
+audit-profiles-result.json
+
+MMB AGENT SITES/data/settings.json
+MMB AGENT SITES/data/read_history.json
+MMB AGENT SITES/data/analytics_data.json
+MMB AGENT SITES/data/cdp_ports.json
+MMB AGENT SITES/data/shuffle_schedules.json
+MMB AGENT SITES/data/behaviors.json
+
+server/data/cdp_ports.json
+
+server 2 old/
