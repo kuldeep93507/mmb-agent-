@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+release-final/
+release-v151/
 .env
 *.env
 analytics_data.json

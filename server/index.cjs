@@ -7,13 +7,17 @@
  */
 
 // Load .env first (lightweight loader, no dotenv dependency)
-require('./providers/loadEnv.cjs')();
+const fs = require('fs');
+const path = require('path');
+const loadEnv = require('./providers/loadEnv.cjs');
+loadEnv();
+// Packaged Electron build ships runtime.env beside server/
+const runtimeEnvPath = path.join(__dirname, 'runtime.env');
+if (fs.existsSync(runtimeEnvPath)) loadEnv(runtimeEnvPath);
 
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
-const fs = require('fs');
-const path = require('path');
 const { ProfileAgent } = require('./agent.cjs');
 const { Orchestrator } = require('./orchestrator.cjs');
 const { profileRouter } = require('./providers/profileRouter.cjs');
@@ -2047,6 +2051,14 @@ app.post('/api/settings/save', (req, res) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 app.post('/api/update/run', requireAuth, async (req, res) => {
+  if (process.env.MMB_PACKAGED === '1') {
+    return res.status(400).json({
+      success: false,
+      mode: 'download',
+      message: 'Team app updates via installer download. Use the Update button in the app header.',
+    });
+  }
+
   const { execFileSync } = require('child_process');
   const projectDir = path.resolve(__dirname, '..');
 
@@ -2090,8 +2102,15 @@ app.get('/api/update/version', (req, res) => {
   }
 });
 
-// Push update to GitHub (from main laptop)
+// Push update to GitHub (owner dev machine only — blocked in packaged Electron app)
 app.post('/api/update/push', requireAuth, async (req, res) => {
+  if (process.env.MMB_PACKAGED === '1') {
+    return res.status(403).json({
+      success: false,
+      message: 'Git push is disabled in the team app. Push updates from localhost dev only.',
+    });
+  }
+
   const { execFileSync } = require('child_process');
   const projectDir = path.resolve(__dirname, '..');
   const { version, changelog } = req.body || {};
@@ -2285,6 +2304,69 @@ app.post('/api/settings/test/morelogin', async (req, res) => {
   }
 });
 
+/** Team self-setup: fetch 30-day automation token from member's own Multilogin email/password */
+app.post('/api/settings/multilogin/fetch-token', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const email = String(body.multiloginEmail || appSettings.multiloginEmail || '').trim();
+    const password = String(body.multiloginPassword || appSettings.multiloginPassword || '').trim();
+    const folderId = String(body.multiloginFolderId || appSettings.multiloginFolderId || '').trim();
+
+    if (!email || !password) {
+      return res.json({
+        ok: false,
+        message: 'Apna Multilogin email + password daalo pehle (har team member ka alag account).',
+      });
+    }
+
+    const merged = {
+      ...appSettings,
+      multiloginEmail: email,
+      multiloginPassword: password,
+      multiloginToken: '',
+      ...(folderId ? { multiloginFolderId: folderId } : {}),
+    };
+    applySettingsToEnv(merged);
+    delete process.env.MULTILOGIN_TOKEN;
+
+    try { providerFactory.clearCache(); } catch {}
+    const { MultiloginProvider } = require('./providers/MultiloginProvider.cjs');
+    const provider = new MultiloginProvider();
+    const auth = await provider.authenticate({ skipStaticToken: true });
+
+    if (auth.code !== 0) {
+      return res.json({ ok: false, message: auth.message || 'Multilogin sign-in failed' });
+    }
+
+    const token = String(process.env.MULTILOGIN_TOKEN || provider.token || '').trim();
+    if (!token) {
+      return res.json({
+        ok: false,
+        message: 'Sign-in OK but automation token nahi mila. Plan mein Automation API check karo.',
+      });
+    }
+
+    appSettings = {
+      ...appSettings,
+      multiloginEmail: email,
+      multiloginPassword: password,
+      multiloginToken: token,
+      ...(folderId ? { multiloginFolderId: folderId } : {}),
+    };
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
+    applySettingsToEnv(appSettings);
+    try { providerFactory.clearCache(); } catch {}
+
+    return res.json({
+      ok: true,
+      message: 'Automation token auto-save ho gaya (30 din). Ab "Test Multilogin" dabao.',
+      tokenPreview: `${token.slice(0, 12)}…`,
+    });
+  } catch (err) {
+    return res.json({ ok: false, message: err.message || 'Token fetch failed' });
+  }
+});
+
 app.post('/api/settings/test/multilogin', async (req, res) => {
   try {
     if (req.body && typeof req.body === 'object') {
@@ -2451,6 +2533,14 @@ const server = app.listen(PORT, () => {
 
   // Start Telegram bot command poller
   notificationService.startCommandPoller(buildTelegramDataProvider());
+});
+
+server.on('error', (err) => {
+  console.error('[FATAL] Server listen error:', err.message);
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use — close other MMB Agent instances and retry.`);
+  }
+  process.exit(1);
 });
 
 process.on('SIGTERM', () => {

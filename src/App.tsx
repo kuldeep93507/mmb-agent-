@@ -18,14 +18,17 @@ import EngagementPage from './components/EngagementPage';
 import GmailSetupPage from './components/GmailSetupPage';
 import SplashScreen from './components/SplashScreen';
 import { useStore } from './store/useStore';
+import { isPackagedElectron } from './utils/appMode';
+import { initAppVersion } from './services/updateChecker';
 import { useVideoMonitor } from './hooks/useVideoMonitor';
 import { useChannelStore } from './store/useChannelStore';
 import { isMultiloginProxyHost } from './utils/profileAdapter';
 import type { OS } from './types';
 
 export default function App() {
-  // Splash screen — show only once per session
+  // Splash in browser dev only — packaged Electron uses electron/splash.html (5.5s)
   const [showSplash, setShowSplash] = useState(() => {
+    if (isPackagedElectron()) return false;
     const shown = sessionStorage.getItem('mmb_splash_shown');
     return !shown;
   });
@@ -33,6 +36,10 @@ export default function App() {
   const handleSplashComplete = useCallback(() => {
     setShowSplash(false);
     sessionStorage.setItem('mmb_splash_shown', '1');
+  }, []);
+
+  useEffect(() => {
+    initAppVersion();
   }, []);
 
   const {
@@ -46,7 +53,7 @@ export default function App() {
   } = useStore();
 
   const channelStore = useChannelStore();
-  const videoMonitor = useVideoMonitor();
+  const videoMonitor = useVideoMonitor(profiles);
   const activeChannelsCount = channelStore.channels.filter(ch => ch.status === 'active').length;
 
   const runningCount = profiles.filter(p => p.status === 'running').length;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, Wifi, RefreshCw, Bell, Download } from 'lucide-react';
 import type { Profile, LogEntry } from '../types';
-import { checkForUpdates, runUpdate, type UpdateStatus } from '../services/updateChecker';
+import { checkForUpdates, initAppVersion, runUpdate, type UpdateStatus } from '../services/updateChecker';
 import { requestNotificationPermission } from '../services/notifications';
 
 interface TopBarProps {
@@ -24,17 +24,21 @@ export default function TopBar({ profiles, logs, activeTab, newVideoCount = 0 }:
 
   // Check for updates on mount
   useEffect(() => {
+    initAppVersion();
     checkForUpdates().then(setUpdateStatus).catch(() => {});
-    // Request notification permission
     requestNotificationPermission().then(setNotifEnabled);
   }, []);
 
   const handleUpdate = async () => {
     setUpdating(true);
-    const result = await runUpdate();
+    const result = await runUpdate(updateStatus?.downloadUrl);
     if (result.success) {
-      setUpdateStatus(prev => prev ? { ...prev, hasUpdate: false } : null);
-      alert('✅ Update complete! Restart the tool to apply changes.');
+      if (result.mode === 'download') {
+        alert('✅ ' + result.message);
+      } else {
+        setUpdateStatus(prev => prev ? { ...prev, hasUpdate: false } : null);
+        alert('✅ Update complete! Restart the tool to apply changes.');
+      }
     } else {
       alert('❌ Update failed: ' + result.message);
     }
@@ -74,7 +78,7 @@ export default function TopBar({ profiles, logs, activeTab, newVideoCount = 0 }:
           <button onClick={handleUpdate} disabled={updating}
             className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1 rounded-lg text-xs font-medium transition-all">
             <RefreshCw size={11} className={updating ? 'animate-spin' : ''} />
-            {updating ? 'Updating...' : 'Update Now'}
+            {updating ? 'Opening…' : updateStatus.mode === 'download' ? 'Download Update' : 'Update Now'}
           </button>
         </div>
       )}

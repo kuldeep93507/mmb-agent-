@@ -2,6 +2,7 @@
  * useVideoMonitor.ts
  * Background hook — polls YouTube RSS for monitored channels.
  * Fires in-app notifications when a NEW video is detected.
+ * When autoEngage is ON, queues Engagement jobs automatically.
  *
  * Usage: call once at App level, pass { notifications, unreadCount, ... } down.
  */
@@ -21,6 +22,8 @@ import {
   getUnreadCount,
   type NewVideoNotification,
 } from '../utils/videoMonitorStore';
+import { triggerAutoEngagement } from '../utils/engagementApi';
+import type { Profile } from '../types';
 
 function nanoid8() {
   return Math.random().toString(36).slice(2, 10);
@@ -36,11 +39,13 @@ export interface UseVideoMonitorReturn {
   lastChecked: number | null;
 }
 
-export function useVideoMonitor(): UseVideoMonitorReturn {
+export function useVideoMonitor(profiles: Profile[] = []): UseVideoMonitorReturn {
   const [notifications, setNotifications] = useState<NewVideoNotification[]>(() => getNotifications());
   const [unreadCount, setUnreadCount] = useState(() => getUnreadCount());
   const [lastChecked, setLastChecked] = useState<number | null>(null);
   const checkingRef = useRef(false);
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
 
   const refresh = useCallback(() => {
     const n = getNotifications();
@@ -94,11 +99,28 @@ export function useVideoMonitor(): UseVideoMonitorReturn {
               });
             }
 
-            // Auto-engage check — will be wired up in Part 3
             const config = getMonitorConfig(channelId);
             if (config.autoEngage) {
-              // TODO Part 3: trigger engagement queue for this video
-              console.log(`[VideoMonitor] Auto-engage triggered for ${latestVideo.videoId}`);
+              try {
+                const result = await triggerAutoEngagement(
+                  {
+                    url: latestVideo.url,
+                    title: latestVideo.title,
+                    channelName: data.channelName,
+                  },
+                  profilesRef.current,
+                );
+                if (result.ok) {
+                  markEngagementStarted(notif.id);
+                  console.log(
+                    `[VideoMonitor] Auto-engage queued ${result.jobIds?.length ?? 0} job(s) for ${latestVideo.videoId}`,
+                  );
+                } else {
+                  console.warn(`[VideoMonitor] Auto-engage skipped: ${result.message}`);
+                }
+              } catch (err) {
+                console.warn('[VideoMonitor] Auto-engage error:', err);
+              }
             }
           }
         } catch (err) {

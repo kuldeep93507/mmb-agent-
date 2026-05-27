@@ -231,6 +231,21 @@ export async function testMoreLoginConnection(settings: Pick<AppSettings, 'morel
   }
 }
 
+export async function fetchMultiloginToken(
+  settings: Pick<AppSettings, 'multiloginEmail' | 'multiloginPassword' | 'multiloginFolderId'>,
+): Promise<{ ok: boolean; message: string; tokenPreview?: string }> {
+  try {
+    const res = await backendFetch('/api/settings/multilogin/fetch-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    return await res.json();
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function testMultiloginConnection(
   settings?: Pick<AppSettings, 'multiloginEmail' | 'multiloginPassword' | 'multiloginToken' | 'multiloginFolderId'>,
 ): Promise<{ ok: boolean; message: string }> {

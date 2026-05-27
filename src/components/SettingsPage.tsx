@@ -15,11 +15,13 @@ import {
   fetchConcurrency,
   testMoreLoginConnection,
   testMultiloginConnection,
+  fetchMultiloginToken,
   testNotification,
   exportSettingsJson,
   parseSettingsImport,
 } from '../utils/settingsApi';
 import { backendFetch, getAuthHeaders } from '../services/backendOrigin';
+import { isPackagedElectron } from '../utils/appMode';
 import {
   loadNotificationPrefs,
   saveNotificationPrefs,
@@ -51,6 +53,7 @@ export default function SettingsPage() {
   const [showMlPassword, setShowMlPassword] = useState(false);
   const [showMlToken, setShowMlToken] = useState(false);
   const [testingMl, setTestingMl] = useState<'morelogin' | 'multilogin' | null>(null);
+  const [fetchingMlToken, setFetchingMlToken] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testingNotify, setTestingNotify] = useState<'telegram' | 'email' | null>(null);
   const [notifyPrefs, setNotifyPrefs] = useState<NotificationPrefs>(() => loadNotificationPrefs());
@@ -147,6 +150,30 @@ export default function SettingsPage() {
         : await testMultiloginConnection(settings);
     setTestResult(r);
     setTestingMl(null);
+  };
+
+  const runFetchMultiloginToken = async () => {
+    if (!settings.multiloginEmail?.trim() || !settings.multiloginPassword?.trim()) {
+      setTestResult({ ok: false, message: 'Pehle apna Multilogin email + password daalo (har member ka alag account).' });
+      return;
+    }
+    setFetchingMlToken(true);
+    setTestResult(null);
+    const r = await fetchMultiloginToken({
+      multiloginEmail: settings.multiloginEmail,
+      multiloginPassword: settings.multiloginPassword,
+      multiloginFolderId: settings.multiloginFolderId,
+    });
+    if (r.ok) {
+      const remote = await fetchSettingsFromServer();
+      if (remote) setSettings(remote);
+      else {
+        const local = loadSettingsLocal();
+        if (local.multiloginToken) setSettings((s) => ({ ...s, multiloginToken: local.multiloginToken }));
+      }
+    }
+    setTestResult(r);
+    setFetchingMlToken(false);
   };
 
   const runNotifyTest = async (type: 'telegram' | 'email') => {
@@ -392,6 +419,14 @@ export default function SettingsPage() {
 
         {/* Multilogin */}
         <Section title="Multilogin" icon={<Key size={15} className="text-purple-400" />}>
+          <div className="mb-4 bg-purple-950/30 border border-purple-800/40 rounded-xl px-4 py-3 text-xs text-purple-200/90 leading-relaxed">
+            <p className="font-semibold text-purple-300 mb-1">Team setup (har member ka alag Multilogin account)</p>
+            <p>1. Multilogin X app install karo + apne account se login</p>
+            <p>2. Neeche apna email, password aur folder ID daalo</p>
+            <p>3. <strong>Auto Get Token</strong> dabao — token khud save ho jayega (30 din)</p>
+            <p>4. <strong>Test Multilogin</strong> → profiles dikhen to done ✅</p>
+            <p className="text-purple-400/70 mt-2">Password kisi ko mat bhejo — sirf apne PC pe daalo.</p>
+          </div>
           <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-gray-400 text-xs flex items-center gap-1 mb-1.5">
@@ -494,14 +529,24 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            disabled={testingMl === 'multilogin'}
-            onClick={() => runTest('multilogin')}
-            className="mt-3 text-xs px-3 py-2 rounded-lg bg-purple-600/30 text-purple-300 border border-purple-600/40 disabled:opacity-50"
-          >
-            {testingMl === 'multilogin' ? 'Testing…' : 'Test Multilogin'}
-          </button>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={fetchingMlToken}
+              onClick={runFetchMultiloginToken}
+              className="text-xs px-3 py-2 rounded-lg bg-green-600/30 text-green-300 border border-green-600/40 disabled:opacity-50"
+            >
+              {fetchingMlToken ? 'Fetching token…' : 'Auto Get Token'}
+            </button>
+            <button
+              type="button"
+              disabled={testingMl === 'multilogin'}
+              onClick={() => runTest('multilogin')}
+              className="text-xs px-3 py-2 rounded-lg bg-purple-600/30 text-purple-300 border border-purple-600/40 disabled:opacity-50"
+            >
+              {testingMl === 'multilogin' ? 'Testing…' : 'Test Multilogin'}
+            </button>
+          </div>
         </Section>
 
         <Section title="Multilogin Trash" icon={<Trash2 size={15} className="text-orange-400" />} note="Trash profiles count toward subscription limit — manual + auto cleanup">
@@ -962,7 +1007,7 @@ export default function SettingsPage() {
           </div>
         </Section>
 
-        <GitPushSection />
+        {!isPackagedElectron() && <GitPushSection />}
       </div>
     </div>
   );

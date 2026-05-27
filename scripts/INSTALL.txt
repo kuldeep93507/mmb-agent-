@@ -1,0 +1,36 @@
+MMB AGENT 24/7 — TEAM INSTALL GUIDE
+====================================
+
+Version: 1.5.1
+By: Kuldeep Prajapati
+
+INSTALL (first time)
+--------------------
+1. Extract this ZIP anywhere (Desktop is fine).
+2. Double-click "MMB Agent 247 Setup 1.5.0.exe".
+3. Follow the installer — allow Desktop shortcut if you want.
+4. Open "MMB Agent 24/7" from Desktop or Start Menu.
+5. Wait for splash screen (~5 seconds), then the app opens.
+
+IMPORTANT
+---------
+- Do NOT share this file outside your team.
+- Git push / developer tools are disabled in this app (owner only).
+- Your profiles, settings, and data stay on YOUR PC.
+
+UPDATES (when owner releases new version)
+-----------------------------------------
+1. Open MMB Agent — if update is available, a blue banner appears at top.
+2. Click "Download Update".
+3. Browser opens — download the new ZIP.
+4. Close MMB Agent completely.
+5. Run the new Setup.exe (install over old version is OK).
+6. Reopen MMB Agent.
+
+TROUBLESHOOTING
+---------------
+- App won't start: Restart PC, run Setup as Administrator once.
+- Port error: Close any other MMB Agent window, try again.
+- Startup log: %APPDATA%\mmb-agent-247\startup.log
+
+Support: Contact Kuldeep (owner)

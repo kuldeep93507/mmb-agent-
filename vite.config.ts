@@ -2,6 +2,7 @@ import path from "path";
 import http from "http";
 import https from "https";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
@@ -9,6 +10,7 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const APP_VERSION = JSON.parse(readFileSync(path.join(__dirname, "package.json"), "utf8")).version as string;
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -76,6 +78,9 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   plugins: [
     react(),
     tailwindcss(),

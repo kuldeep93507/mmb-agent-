@@ -198,8 +198,9 @@ class MultiloginProvider extends BrowserProvider {
                   timeout: DEFAULT_TIMEOUT,
                 }
               );
-              const autoToken = autoRes.body && autoRes.body.data && autoRes.body.data.token
-                ? autoRes.body.data.token
+              const body = autoRes.body && autoRes.body.data ? autoRes.body.data : autoRes.body;
+              const autoToken = (body && (body.token || body.automation_token))
+                ? (body.token || body.automation_token)
                 : null;
 
               if (autoToken) {
