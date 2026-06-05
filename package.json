@@ -1,19 +1,14 @@
 {
   "name": "mmb-agent-247",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.4",
   "type": "module",
   "main": "electron/main.cjs",
   "author": "Kuldeep Prajapati",
   "description": "MMB Agent 24/7 — YouTube Growth Automation",
   "scripts": {
     "dev": "vite --host",
-    "server": "node server/index.cjs",
-    "watchdog": "node server/watchdog.cjs",
-    "test:youtube-ui-smoke": "node server/scripts/youtube-ui-smoke.cjs",
-    "test:full-bot": "node server/scripts/full-bot-smoke-test.cjs",
-    "test:traffic-qa": "node server/scripts/e2e-traffic-qa.cjs",
-    "test:antidetect": "node server/scripts/audit-antidetect-4.cjs",
+    "server": "python server_python/main.py",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
     "build": "vite build",
     "preview": "vite preview",
@@ -23,19 +18,16 @@
     "dist:win": "npm run build && electron-builder --win",
     "package:team": "node scripts/package-team-release.cjs",
     "test": "jest --testPathPatterns=server/tests",
-    "test:bugs": "jest --config jest.exploratory.config.cjs",
-    "multilogin:token": "node server/scripts/get-multilogin-token.cjs"
+    "test:bugs": "jest --config jest.exploratory.config.cjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
     "dotenv": "^16.5.0",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
     "lucide-react": "^1.14.0",
     "nanoid": "^5.1.11",
-    "playwright-core": "^1.60.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "recharts": "^3.8.1",
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
@@ -59,7 +51,7 @@
     "productName": "MMB Agent 24/7",
     "copyright": "Copyright © 2026 Kuldeep Prajapati",
     "directories": {
-      "output": "release"
+      "output": "release2"
     },
     "files": [
       "dist/**/*",
@@ -79,10 +71,15 @@
       {
         "from": "electron/runtime.env",
         "to": "server/runtime.env"
+      },
+      {
+        "from": "user-settings.json",
+        "to": "user-settings.json"
       }
     ],
     "win": {
       "icon": "electron/icon.png",
+      "signAndEditExecutable": false,
       "target": [
         "nsis"
       ]

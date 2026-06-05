@@ -1,11 +1,10 @@
 {
-  "version": "1.5.1",
-  "lastUpdate": "2026-05-27",
-  "downloadUrl": "https://github.com/kuldeep93507/MMB-AGENT-24-7/releases/latest/download/MMB-Agent-247-Team-v1.5.1-FINAL.zip",
+  "version": "1.5.4",
+  "lastUpdate": "2026-05-28",
   "changelog": [
-    "Auto Get Token button for team Multilogin setup",
-    "Download update button for team app",
-    "Git push blocked in team app",
-    "MMB logo and 5.5s splash screen"
-  ]
+    "MMB Agent 24/7 — release2 build",
+    "Live Monitor + shuffle + engagement fixes",
+    "Team app: use Download Update banner when owner publishes GitHub release"
+  ],
+  "downloadUrl": ""
 }

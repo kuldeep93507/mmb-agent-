@@ -46,6 +46,7 @@ const ACTIVE_TAB_KEY = 'mmb_active_tab';
 export const VALID_APP_TABS = new Set([
   'dashboard', 'monitor', 'profiles', 'channels', 'video-shuffle', 'backlinks', 'scheduler',
   'manual', 'analytics', 'comments', 'jobs', 'logs', 'settings', 'engagement', 'gmail-setup',
+  'proxy',
 ]);
 
 const REMOVED_TAB_REDIRECT: Record<string, string> = {
@@ -89,7 +90,7 @@ export function useStore() {
         return stored;
       }
     } catch {}
-    return 'morelogin';  // default: MoreLogin — safer fallback (Multilogin needs cloud auth)
+    return 'multilogin';
   });
   const browserProviderRef = useRef<ProviderSelection>(browserProvider);
 
@@ -181,10 +182,17 @@ export function useStore() {
     await fetchProfiles(provider);
   }, [fetchProfiles]);
 
-  // Hydrate server-backed data + API token on mount
+  // Hydrate server-backed data + API token on mount; sync browser provider from server settings
   useEffect(() => {
     void fetchSettingsFromServer().then((s) => {
-      if (s) saveSettingsLocal(s);
+      if (!s) return;
+      saveSettingsLocal(s);
+      const remote = s.browserProvider;
+      if (remote === 'morelogin' || remote === 'multilogin' || remote === 'all') {
+        setBrowserProviderState(remote);
+        browserProviderRef.current = remote;
+        try { localStorage.setItem('mmb_browser_provider', remote); } catch { /* ignore */ }
+      }
     });
     void hydrateAllAppDataFromServer();
   }, []);
@@ -290,11 +298,14 @@ export function useStore() {
           proxyType: resolvedProxyType,       // 'smartproxy' | 'multilogin' | 'none'
           profileMode: resolvedProfileMode,   // 'cloud' | 'quick'
           fingerprintConfig: {
-            canvas: 'real',
-            webrtc: 'real',
-            timezone: 'real',
-            screen: 'real',
-            navigator: 'real',
+            canvas: 'noise',
+            webrtc: 'custom',
+            timezone: 'custom',
+            screen: 'custom',
+            navigator: 'custom',
+            geolocation: 'custom',
+            audio: 'noise',
+            webgl: 'noise',
           },
         };
 
@@ -511,11 +522,14 @@ export function useStore() {
           name: profile.name,
           proxyType: proxyTypeForRecreate,
           fingerprintConfig: {
-            canvas: 'real',
-            webrtc: 'real',
-            timezone: 'real',
-            screen: 'real',
-            navigator: 'real',
+            canvas: 'noise',
+            webrtc: 'custom',
+            timezone: 'custom',
+            screen: 'custom',
+            navigator: 'custom',
+            geolocation: 'custom',
+            audio: 'noise',
+            webgl: 'noise',
           },
         }),
       });

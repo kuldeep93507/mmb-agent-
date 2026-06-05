@@ -27,6 +27,10 @@ export interface AppSettings {
   cronSchedule: string;
   // AI Brain
   anthropicApiKey: string;
+  aiProvider: 'auto' | 'claude' | 'nvidia';
+  nvidiaApiKey: string;
+  nvidiaModel: string;
+  aiVisionEnabled: boolean | string;
   // YT Agent 24/7
   ytMaxTotalAgents: string;
   ytVideosPerSessionMin: string;
@@ -85,13 +89,17 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   proxyPassword: '',
   proxyPrefix: '',
   defaultProxyLife: '4hr',
-  maxConcurrent: '5',
-  multiloginMaxConcurrent: '3',
+  maxConcurrent: '20',
+  multiloginMaxConcurrent: '20',
   multiloginBatchGapMs: '45000',
   browserProvider: 'multilogin',
   cronEnabled: false,
   cronSchedule: '0 9 * * *',
   anthropicApiKey: '',
+  aiProvider: 'auto',
+  nvidiaApiKey: '',
+  nvidiaModel: 'meta/llama-3.2-90b-vision-instruct',
+  aiVisionEnabled: true,
   ytMaxTotalAgents: '40',
   ytVideosPerSessionMin: '3',
   ytVideosPerSessionMax: '7',
@@ -118,7 +126,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   multiloginPurgeOnDelete: true,
   multiloginAutoEmptyTrash: false,
   multiloginAutoEmptyTrashHours: '6',
-  multiloginAutoArrangeWindows: true,
+  multiloginAutoArrangeWindows: false,
   // Window / display resolution
   windowWidth: '1920',
   windowHeight: '1080',

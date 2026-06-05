@@ -2,6 +2,38 @@
 
 > **Full-stack, multi-profile YouTube watch-time automation with antidetect browser integration, human-behaviour simulation, and a React dashboard.**
 
+## V2 Update (June 2026) — YouTube Selectors Overhaul
+
+**670 permanent selectors** integrated via `behavior/youtube/` package. See `CHANGELOG_V2.md` and `AUDIT_REPORT_V2.md`.
+
+### Quick Start (V2)
+```bash
+# Install Python deps
+pip install -r server_python/requirements.txt
+
+# Run tests (23 tests)
+python -m pytest tests/ -v
+
+# Start server (includes /dashboard control panel)
+python server_python/main.py
+# → API: http://localhost:3100/api/
+# → V2 Dashboard: http://localhost:3100/dashboard
+```
+
+### V2 Selector Usage
+```python
+from behavior.youtube.selectors import DESKTOP, JS_API
+from behavior.youtube.safe_actions import safe_click
+from behavior.youtube.state import is_liked, is_subscribed
+
+# Fallback chain click
+await safe_click(tab, DESKTOP['like_button'], action_name='LIKE')
+
+# State-aware engagement
+if not await is_liked(tab):
+    await safe_click(tab, DESKTOP['like_button'], action_name='LIKE')
+```
+
 ---
 
 ## Table of Contents

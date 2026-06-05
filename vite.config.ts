@@ -80,6 +80,8 @@ export default defineConfig(({ mode }) => {
   return {
   define: {
     __APP_VERSION__: JSON.stringify(APP_VERSION),
+    // Localhost hits backend directly (not /backend-api proxy) — must match server BACKEND_API_KEY
+    'import.meta.env.VITE_BACKEND_API_KEY': JSON.stringify(BACKEND_PROXY_KEY),
   },
   plugins: [
     react(),

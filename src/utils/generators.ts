@@ -40,7 +40,7 @@ export function generateProxyConfig(life?: ProxyLife): ProxyConfig {
   const sessionId = generateSessionId();
   const selectedLife = life || creds.defaultLife || randomFrom([...PROXY_LIVES]);
   const now = Date.now();
-  const username = `${creds.prefix}_area-US_state-${state}_city-${city}_life-${selectedLife}_session-${sessionId}`;
+  const username = `${creds.prefix}_area-US_state-${state}_life-${selectedLife}_session-${sessionId}`;
 
   return {
     server: creds.server,
@@ -60,7 +60,7 @@ export function renewProxySession(existing: ProxyConfig): ProxyConfig {
   const creds = proxyCredentials();
   const newSessionId = generateSessionId();
   const now = Date.now();
-  const username = `${creds.prefix}_area-US_state-${existing.state}_city-${existing.city}_life-${existing.life}_session-${newSessionId}`;
+  const username = `${creds.prefix}_area-US_state-${existing.state}_life-${existing.life}_session-${newSessionId}`;
   return {
     ...existing,
     username,

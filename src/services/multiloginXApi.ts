@@ -2,12 +2,8 @@
  * Multilogin X Launcher API Service
  * Base URL: https://launcher.mlx.yt:45001
  *
- * Proper fingerprint configuration for real YouTube user appearance
- * - Canvas: disabled (real, not masked)
- * - WebRTC: natural/disabled (real, not masked)
- * - Timezone: custom (synced with proxy location)
- * - Screen: natural/custom (real resolution, not masked)
- * - Navigator: custom (real user agent)
+ * Antidetect profile create — noise canvas/webgl/audio, custom proxy-aligned values.
+ * Never use natural/disabled (real fingerprint → IP leak risk).
  */
 
 // ============ TYPES ============
@@ -137,43 +133,20 @@ export function buildRealFingerprintProfile(options: {
     is_headless: false,
     parameters: {
       flags: {
-        // Real Canvas - NOT masked (YouTube detection score: much lower)
-        canvas_noise: 'disabled',
-
-        // Real WebRTC - NOT masked (IP leak prevention but real value)
-        webrtc_masking: 'natural',
-
-        // Real Timezone - synced with proxy location
+        canvas_noise: 'mask',
+        graphics_noise: 'mask',
+        audio_masking: 'mask',
+        ports_masking: 'mask',
+        webrtc_masking: 'custom',
         timezone_masking: 'custom',
-
-        // Real Screen resolution - looks like actual device
-        screen_masking: 'natural',
-
-        // Real Navigator - actual user agent and platform
-        navigator_masking: 'custom',
-
-        // Real geolocation - synced with proxy
         geolocation_masking: 'custom',
         geolocation_popup: 'prompt',
-
-        // Real localization - matches user region
         localization_masking: 'custom',
-
-        // Media devices - real hardware
-        media_devices_masking: 'natural',
-
-        // Ports - real open ports
-        ports_masking: 'natural',
-
-        // Graphics - real GPU info
-        graphics_masking: 'natural',
-        graphics_noise: 'natural',
-
-        // Fonts - real system fonts
-        fonts_masking: 'natural',
-
-        // Audio - real audio devices
-        audio_masking: 'natural',
+        screen_masking: 'custom',
+        navigator_masking: 'custom',
+        media_devices_masking: 'custom',
+        graphics_masking: 'custom',
+        fonts_masking: 'mask',
 
         // Proxy masking - use custom proxy if provided
         proxy_masking: options.proxy ? 'custom' : 'disabled',

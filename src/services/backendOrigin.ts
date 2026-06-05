@@ -30,6 +30,12 @@ export function getBackendBaseUrl(): string {
   if (protocol === "file:" || protocol === "app:") {
     return `http://127.0.0.1:${port}`;
   }
+
+  // Vite dev server — always use proxy (injects x-api-key server-side; works on localhost + LAN IP)
+  if (import.meta.env.DEV && (protocol === "http:" || protocol === "https:")) {
+    return "/backend-api";
+  }
+
   if (
     (protocol === "http:" || protocol === "https:") &&
     (hostname === "localhost" || hostname === "127.0.0.1")
@@ -57,7 +63,8 @@ export function getAuthHeaders(): Record<string, string> {
       typeof import.meta.env.VITE_BACKEND_API_KEY === "string"
         ? import.meta.env.VITE_BACKEND_API_KEY.trim()
         : "";
-    if (key) h["x-api-key"] = key;
+    const resolved = key || "mmb-local-dev-2025";
+    h["x-api-key"] = resolved;
     const token = localStorage.getItem(API_TOKEN_KEY);
     if (token && token.trim()) h["X-MMB-Token"] = token.trim();
   } catch (err) {

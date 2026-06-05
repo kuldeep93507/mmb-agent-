@@ -1,437 +1,336 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  TrendingUp,
-  Eye,
-  Clock,
-  Users,
-  Calendar,
-  ThumbsUp,
-  Bell,
-  MessageSquare,
-  Download,
-  AlertCircle,
-  Search,
-  Megaphone,
-  Route,
-  Activity,
-  Zap,
+  Eye, Clock, Users, ThumbsUp, Bell, MessageSquare,
+  Download, AlertCircle, Search, Zap,
 } from 'lucide-react';
+import {
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+} from 'recharts';
 import type { Profile } from '../types';
 import RateLimitDashboard from './RateLimitDashboard';
 import {
-  fetchAnalytics,
-  exportAnalyticsJson,
-  formatWatchTime,
-  type AnalyticsResponse,
-  type AnalyticsTimeFilter,
+  fetchAnalytics, exportAnalyticsJson, formatWatchTime,
+  type AnalyticsResponse, type AnalyticsTimeFilter,
 } from '../utils/analyticsApi';
+import { PageShell, PageHeader, Card, CardHeader, Badge, Btn } from './ui';
 
-interface AnalyticsPageProps {
-  profiles:      Profile[];
-  setActiveTab?: (tab: string) => void;
-}
+interface AnalyticsPageProps { profiles: Profile[]; setActiveTab?: (tab: string) => void; }
 
-type ProfileSortKey = 'name' | 'views' | 'watchTime' | 'likes';
+const FILTERS: { key: AnalyticsTimeFilter; label: string }[] = [
+  { key:'today',     label:'Today'   },
+  { key:'yesterday', label:'Yesterday' },
+  { key:'7d',        label:'7 Days'  },
+  { key:'30d',       label:'30 Days' },
+  { key:'all',       label:'All Time'},
+];
 
-const FILTER_LABELS: Record<AnalyticsTimeFilter, string> = {
-  today: '📅 Aaj',
-  yesterday: '⏪ Kal',
-  '7d': '📊 7 Din',
-  '30d': '📈 30 Din',
-  all: '🌐 All Time',
-};
 
 const PAGE_SIZE = 20;
-
-function actionLabel(action: string): string {
-  const map: Record<string, string> = {
-    view: 'View',
-    watchTime: 'Watch time',
-    like: 'Like',
-    subscribe: 'Subscribe',
-    comment: 'Comment',
-    session: 'Session',
-    ads_total: 'Ad shown',
-    ads_skipped: 'Ad skipped',
-    ads_watched_full: 'Ad watched',
-    ad_watch_time: 'Ad watch time',
-    'traffic_youtube-search': 'Traffic: YouTube',
-    traffic_google: 'Traffic: Google',
-    traffic_bing: 'Traffic: Bing',
-    traffic_direct: 'Traffic: Direct',
-    'traffic_direct-fallback': 'Traffic: Direct',
-    'traffic_channel-page': 'Traffic: Channel',
-    traffic_backlink: 'Traffic: Backlink',
-    'traffic_backlink-direct-fallback': 'Traffic: Backlink (direct fallback)',
-  };
-  return map[action] || action;
-}
+type SortKey = 'name'|'views'|'watchTime'|'likes';
 
 export default function AnalyticsPage({ profiles, setActiveTab }: AnalyticsPageProps) {
-  const [timeFilter, setTimeFilter] = useState<AnalyticsTimeFilter>('today');
-  const [liveData, setLiveData] = useState<AnalyticsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [profileSearch, setProfileSearch] = useState('');
-  const [sortKey, setSortKey] = useState<ProfileSortKey>('views');
-  const [page, setPage] = useState(0);
+  const [filter, setFilter]     = useState<AnalyticsTimeFilter>('today');
+  const [data,   setData]       = useState<AnalyticsResponse|null>(null);
+  const [loading,setLoading]    = useState(false);
+  const [error,  setError]      = useState<string|null>(null);
+  const [search, setSearch]     = useState('');
+  const [sortKey,setSortKey]    = useState<SortKey>('views');
+  const [page,   setPage]       = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const data = await fetchAnalytics(timeFilter);
-    if (data) {
-      setLiveData(data);
-      setError(null);
-    } else {
-      setError('Analytics server se connect nahi ho paya. Backend chal raha hai?');
-    }
+    const d = await fetchAnalytics(filter);
+    if (d) { setData(d); setError(null); } else setError('Backend connect fail. Running hai?');
     setLoading(false);
-  }, [timeFilter]);
+  }, [filter]);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 5000);
-    return () => clearInterval(interval);
-  }, [load]);
+  useEffect(() => { load(); const id=setInterval(load,5000); return ()=>clearInterval(id); }, [load]);
+  useEffect(() => { setPage(0); }, [filter, search, sortKey]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [timeFilter, profileSearch, sortKey]);
-
-  const profileById = useMemo(() => {
-    const m = new Map<string, Profile>();
-    profiles.forEach((p) => m.set(p.id, p));
-    return m;
-  }, [profiles]);
+  const profileById = useMemo(()=>{ const m=new Map<string,Profile>(); profiles.forEach(p=>m.set(p.id,p)); return m; },[profiles]);
 
   const profileRows = useMemo(() => {
-    const ids = new Set([
-      ...profiles.map((p) => p.id),
-      ...Object.keys(liveData?.perProfile || {}),
-    ]);
-    const rows = [...ids].map((id) => {
+    const ids = new Set([...profiles.map(p=>p.id), ...Object.keys(data?.perProfile||{})]);
+    const rows = [...ids].map(id => {
       const p = profileById.get(id);
-      const stats = liveData?.perProfile?.[id] || {
-        views: 0,
-        watchTime: 0,
-        likes: 0,
-        subscribes: 0,
-        comments: 0,
-      };
-      return {
-        id,
-        name: p?.name || `${id.slice(0, 12)}… (removed)`,
-        os: p?.os || '—',
-        status: p?.status || 'idle',
-        orphan: !p,
-        ...stats,
-      };
+      const s = data?.perProfile?.[id] || {views:0,watchTime:0,likes:0,subscribes:0,comments:0};
+      return { id, name:p?.name||`${id.slice(0,12)}…`, os:p?.os||'—', status:p?.status||'idle', orphan:!p, ...s };
     });
-    const q = profileSearch.trim().toLowerCase();
-    const filtered = q
-      ? rows.filter((r) => r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q))
-      : rows;
-    filtered.sort((a, b) => {
-      if (sortKey === 'name') return a.name.localeCompare(b.name);
-      return (b[sortKey] as number) - (a[sortKey] as number);
-    });
+    const q = search.trim().toLowerCase();
+    const filtered = q ? rows.filter(r=>r.name.toLowerCase().includes(q)||r.id.toLowerCase().includes(q)) : rows;
+    filtered.sort((a,b)=> sortKey==='name' ? a.name.localeCompare(b.name) : (b[sortKey] as number)-(a[sortKey] as number));
     return filtered;
-  }, [profiles, liveData, profileById, profileSearch, sortKey]);
+  }, [profiles, data, profileById, search, sortKey]);
 
-  const pageCount = Math.max(1, Math.ceil(profileRows.length / PAGE_SIZE));
-  const pagedRows = profileRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const pageCount = Math.max(1, Math.ceil(profileRows.length/PAGE_SIZE));
+  const pagedRows = profileRows.slice(page*PAGE_SIZE, (page+1)*PAGE_SIZE);
 
-  const trend = liveData?.dailyTrend || [];
-  const maxTrendViews = Math.max(1, ...trend.map((d) => d.views));
+  // Build chart data from dailyTrend (watchTime stored in seconds)
+  const chartData = (data?.dailyTrend||[]).slice(-14).map(d=>({
+    date: d.date.slice(5),
+    views: d.views,
+    watchTime: Math.round((d.watchTime||0)/60),
+  }));
 
-  const trafficTotal =
-    (liveData?.trafficYouTube || 0) +
-    (liveData?.trafficGoogle || 0) +
-    (liveData?.trafficBing || 0) +
-    (liveData?.trafficDirect || 0) +
-    (liveData?.trafficDirectFallback || 0) +
-    (liveData?.trafficChannel || 0) +
-    (liveData?.trafficBacklink || 0) +
-    (liveData?.trafficBacklinkFallback || 0);
+  const trafficTotal = (data?.trafficYouTube||0)+(data?.trafficGoogle||0)+(data?.trafficBing||0)
+    +(data?.trafficDirect||0)+(data?.trafficChannel||0)+(data?.trafficBacklink||0)+(data?.trafficDirectFallback||0);
+
+  const trafficRows = [
+    { label:'YouTube',  value:data?.trafficYouTube||0,  color:'#ef4444' },
+    { label:'Google',   value:data?.trafficGoogle||0,   color:'#3b82f6' },
+    { label:'Bing',     value:data?.trafficBing||0,     color:'#8b5cf6' },
+    { label:'Direct',   value:data?.trafficDirect||0,   color:'#f59e0b' },
+    { label:'Channel',  value:data?.trafficChannel||0,  color:'#22c55e' },
+    { label:'Backlink', value:data?.trafficBacklink||0, color:'#ec4899' },
+  ].filter(r=>r.value>0).sort((a,b)=>b.value-a.value);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-gray-800 bg-gray-950/50 flex-shrink-0">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Analytics</h1>
-            <p className="text-gray-500 text-sm mt-0.5">Watch time, engagement, ads & traffic — server-backed</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex gap-1.5">
-              {(Object.keys(FILTER_LABELS) as AnalyticsTimeFilter[]).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setTimeFilter(f)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    timeFilter === f
-                      ? 'bg-red-600 text-white shadow-lg shadow-red-600/20'
-                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  {FILTER_LABELS[f]}
-                </button>
-              ))}
-            </div>
-            {setActiveTab && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('engagement')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-yellow-900/30 border border-yellow-700/40 text-yellow-400 hover:bg-yellow-900/50 transition-all"
-              >
-                <Zap size={13} /> Engagement →
-              </button>
-            )}
-            {liveData && (
-              <button
-                type="button"
-                onClick={() => exportAnalyticsJson(liveData, timeFilter)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700"
-              >
-                <Download size={14} /> Export
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="mt-2 flex items-center gap-2 flex-wrap">
-          <Calendar size={14} className="text-gray-500" />
-          <span className="text-xs text-gray-500">
-            Showing: <span className="text-white font-medium">{FILTER_LABELS[timeFilter]}</span>
-          </span>
-          {loading && <span className="text-xs text-yellow-400 animate-pulse">Refreshing…</span>}
-          {!loading && liveData && (
-            <span className="text-xs text-green-500">● Synced</span>
-          )}
-        </div>
-        {error && (
-          <div className="mt-2 flex items-center gap-2 text-amber-400 text-xs">
-            <AlertCircle size={14} />
-            {error}
-            <button type="button" onClick={load} className="underline hover:text-amber-300">
-              Retry
-            </button>
-          </div>
-        )}
-      </div>
+    <PageShell>
+      <div style={{ maxWidth:1280, margin:'0 auto', display:'flex', flexDirection:'column', gap:20 }}>
+        <PageHeader
+          title="Analytics"
+          subtitle={`Live metrics · auto-refresh 5s · ${new Date().toLocaleDateString('en-IN', { weekday:'short', month:'short', day:'numeric' })}`}
+          actions={
+            <>
+              <span style={{
+                display:'inline-flex', alignItems:'center', gap:5,
+                fontSize:10, fontWeight:600, padding:'3px 10px', borderRadius:99,
+                background: error ? 'var(--mmb-red-bg)' : 'var(--mmb-green-bg)',
+                color: error ? 'var(--mmb-red)' : 'var(--mmb-green)',
+              }}>
+                <span style={{ width:6, height:6, borderRadius:'50%', background:'currentColor', animation: error ? 'none' : 'mmb-pulse-dot 1.5s ease-out infinite' }}/>
+                {error ? 'Offline' : 'Live'}
+              </span>
+              {/* Filter buttons */}
+              <div style={{ display:'flex', gap:4 }}>
+                {FILTERS.map(f=>(
+                  <button key={f.key} onClick={()=>setFilter(f.key)} style={{
+                    padding:'6px 12px', borderRadius:8, fontSize:12, fontWeight:600,
+                    border:'none', cursor:'pointer', transition:'all .15s',
+                    background: filter===f.key ? 'var(--mmb-accent)' : 'var(--mmb-surface)',
+                    color: filter===f.key ? '#fff' : 'var(--mmb-muted)',
+                    boxShadow: filter===f.key ? 'none' : 'var(--mmb-shadow)',
+                  }}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              {setActiveTab && (
+                <Btn onClick={()=>setActiveTab('engagement')} icon={<Zap size={12}/>}>Engagement →</Btn>
+              )}
+              {data && (
+                <Btn onClick={()=>exportAnalyticsJson(data, filter)} icon={<Download size={12}/>}>Export</Btn>
+              )}
+              {loading && <span style={{ fontSize:11, color:'var(--mmb-yellow)', fontWeight:600 }}>Syncing…</span>}
+              {error && (
+                <span style={{ fontSize:11, color:'var(--mmb-red)', display:'flex', alignItems:'center', gap:4 }}>
+                  <AlertCircle size={11}/>{error}
+                  <button onClick={load} style={{ background:'none', border:'none', color:'var(--mmb-accent)', cursor:'pointer', fontSize:11, fontWeight:600 }}>Retry</button>
+                </span>
+              )}
+            </>
+          }
+        />
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {/* KPI row */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:12 }}>
           {[
-            { label: 'Views', value: liveData?.totalViews ?? 0, icon: Eye, color: 'text-green-400', bg: 'border-green-700/30 bg-green-900/10' },
-            { label: 'Watch Time', value: formatWatchTime(liveData?.totalWatchTime ?? 0), icon: Clock, color: 'text-blue-400', bg: 'border-blue-700/30 bg-blue-900/10' },
-            { label: 'Sessions', value: liveData?.totalSessions ?? 0, icon: Users, color: 'text-purple-400', bg: 'border-purple-700/30 bg-purple-900/10' },
-            { label: 'Likes', value: liveData?.totalLikes ?? 0, icon: ThumbsUp, color: 'text-red-400', bg: 'border-red-700/30 bg-red-900/10' },
-            { label: 'Subscribes', value: liveData?.totalSubscribes ?? 0, icon: Bell, color: 'text-yellow-400', bg: 'border-yellow-700/30 bg-yellow-900/10' },
-            { label: 'Comments', value: liveData?.totalComments ?? 0, icon: MessageSquare, color: 'text-orange-400', bg: 'border-orange-700/30 bg-orange-900/10' },
-          ].map((s) => (
-            <div key={s.label} className={`border rounded-2xl p-4 ${s.bg}`}>
-              <s.icon size={20} className={`${s.color} mb-2`} />
-              <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-              <div className="text-gray-500 text-xs mt-1">{s.label}</div>
-            </div>
+            { label:'Total Views',  val:(data?.totalViews??0).toLocaleString(),     icon:Eye,          color:'#2563eb' },
+            { label:'Watch Time',   val:formatWatchTime(Math.round(data?.totalWatchTime??0)), icon:Clock, color:'#7c3aed' },
+            { label:'Sessions',     val:(data?.totalSessions??0).toLocaleString(),  icon:Users,        color:'#0891b2' },
+            { label:'Likes',        val:(data?.totalLikes??0).toLocaleString(),     icon:ThumbsUp,     color:'#dc2626' },
+            { label:'Subscribes',   val:(data?.totalSubscribes??0).toLocaleString(),icon:Bell,         color:'#d97706' },
+            { label:'Comments',     val:(data?.totalComments??0).toLocaleString(),  icon:MessageSquare,color:'#16a34a' },
+          ].map(({ label, val, icon:Icon, color }) => (
+            <Card key={label} style={{ overflow:'hidden' }}>
+              <div style={{ height:3, background:color }}/>
+              <div style={{ padding:'12px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
+                  <span style={{ fontSize:10, fontWeight:700, color:'var(--mmb-muted)', textTransform:'uppercase', letterSpacing:'.05em' }}>{label}</span>
+                  <div style={{ width:24, height:24, borderRadius:6, background:`${color}18`, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <Icon size={12} style={{ color }}/>
+                  </div>
+                </div>
+                <div style={{ fontSize:20, fontWeight:800, color:'var(--mmb-text)' }}>{val}</div>
+              </div>
+            </Card>
           ))}
         </div>
 
-        {(liveData?.totalAds ?? 0) > 0 || (liveData?.adWatchTime ?? 0) > 0 ? (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
-              <Megaphone size={16} className="text-amber-400" /> Ads
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatMini label="Total ads" value={liveData?.totalAds ?? 0} />
-              <StatMini label="Skipped" value={liveData?.adsSkipped ?? 0} />
-              <StatMini label="Watched full" value={liveData?.adsWatchedFull ?? 0} />
-              <StatMini label="Ad watch time" value={formatWatchTime(liveData?.adWatchTime ?? 0)} />
-            </div>
-          </div>
-        ) : null}
-
-        {trafficTotal > 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
-              <Route size={16} className="text-cyan-400" /> Traffic sources
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-              <TrafficBar label="YouTube" count={liveData?.trafficYouTube ?? 0} total={trafficTotal} color="bg-red-500" />
-              <TrafficBar label="Google" count={liveData?.trafficGoogle ?? 0} total={trafficTotal} color="bg-blue-500" />
-              <TrafficBar label="Bing" count={liveData?.trafficBing ?? 0} total={trafficTotal} color="bg-teal-500" />
-              <TrafficBar label="Direct" count={liveData?.trafficDirect ?? 0} total={trafficTotal} color="bg-gray-400" />
-              <TrafficBar label="Search failed→URL" count={liveData?.trafficDirectFallback ?? 0} total={trafficTotal} color="bg-amber-600" />
-              <TrafficBar label="Channel" count={liveData?.trafficChannel ?? 0} total={trafficTotal} color="bg-purple-500" />
-              <TrafficBar label="Backlink" count={liveData?.trafficBacklink ?? 0} total={trafficTotal} color="bg-orange-500" />
-              <TrafficBar label="Backlink fallback" count={liveData?.trafficBacklinkFallback ?? 0} total={trafficTotal} color="bg-amber-800" />
-            </div>
-          </div>
-        )}
-
-        {trend.length > 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
-              <TrendingUp size={16} className="text-green-400" /> Daily views
-            </h2>
-            <div className="flex items-end gap-1 h-32">
-              {trend.slice(-14).map((d) => (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                  <div
-                    className="w-full bg-green-600/80 rounded-t"
-                    style={{ height: `${Math.max(4, (d.views / maxTrendViews) * 100)}%` }}
-                    title={`${d.date}: ${d.views} views, ${formatWatchTime(d.watchTime)}`}
-                  />
-                  <span className="text-[9px] text-gray-600 truncate w-full text-center">
-                    {d.date.slice(5)}
+        {/* Chart + Traffic 2-col */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:16 }}>
+          {/* Views area chart */}
+          <Card>
+            <CardHeader title="📈 Views — Last 14 Days"
+              action={
+                <div style={{ display:'flex', gap:12, fontSize:11, color:'var(--mmb-muted)' }}>
+                  <span style={{ display:'flex', alignItems:'center', gap:4 }}>
+                    <span style={{ width:10, height:3, background:'#4f46e5', display:'inline-block', borderRadius:2 }}/>Views
+                  </span>
+                  <span style={{ display:'flex', alignItems:'center', gap:4 }}>
+                    <span style={{ width:10, height:3, background:'#22c55e', display:'inline-block', borderRadius:2 }}/>Watch(min)
                   </span>
                 </div>
-              ))}
+              }
+            />
+            <div style={{ padding:'16px', height:220 }}>
+              {chartData.length===0 ? (
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--mmb-muted)', fontSize:13 }}>
+                  No trend data yet
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top:4, right:4, bottom:0, left:0 }}>
+                    <defs>
+                      <linearGradient id="gViews" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#4f46e5" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="gWatch" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--mmb-border)" vertical={false}/>
+                    <XAxis dataKey="date" tick={{ fontSize:10, fill:'var(--mmb-muted)' }} axisLine={false} tickLine={false}/>
+                    <YAxis tick={{ fontSize:10, fill:'var(--mmb-muted)' }} axisLine={false} tickLine={false} width={35}/>
+                    <Tooltip
+                      contentStyle={{ background:'var(--mmb-surface)', border:'1px solid var(--mmb-border)', borderRadius:8, fontSize:12 }}
+                      labelStyle={{ color:'var(--mmb-text)', fontWeight:600 }}
+                    />
+                    <Area type="monotone" dataKey="views" stroke="#4f46e5" strokeWidth={2} fill="url(#gViews)" dot={false}/>
+                    <Area type="monotone" dataKey="watchTime" stroke="#22c55e" strokeWidth={2} fill="url(#gWatch)" dot={false}/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
             </div>
-          </div>
-        )}
+          </Card>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <h2 className="text-white font-semibold flex items-center gap-2">
-              <Users size={16} className="text-blue-400" /> Per-profile ({profileRows.length})
-            </h2>
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input
-                  type="text"
-                  placeholder="Search profile…"
-                  value={profileSearch}
-                  onChange={(e) => setProfileSearch(e.target.value)}
-                  className="pl-8 pr-3 py-1.5 text-xs bg-gray-800 border border-gray-700 rounded-lg text-white w-40"
-                />
-              </div>
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value as ProfileSortKey)}
-                className="text-xs bg-gray-800 border border-gray-700 rounded-lg text-white px-2 py-1.5"
-              >
-                <option value="views">Sort: views</option>
-                <option value="watchTime">Sort: watch time</option>
-                <option value="likes">Sort: likes</option>
-                <option value="name">Sort: name</option>
-              </select>
+          {/* Traffic breakdown */}
+          <Card>
+            <CardHeader title="🚦 Traffic Breakdown"/>
+            <div style={{ padding:'12px 16px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+              {trafficRows.length===0 ? (
+                <div style={{ textAlign:'center', padding:'30px', color:'var(--mmb-muted)', fontSize:12 }}>No traffic data</div>
+              ) : trafficRows.map(({ label, value, color }) => (
+                <div key={label}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4, fontSize:12 }}>
+                    <span style={{ color:'var(--mmb-text2)', display:'flex', alignItems:'center', gap:5 }}>
+                      <span style={{ width:8, height:8, borderRadius:'50%', background:color, display:'inline-block' }}/>
+                      {label}
+                    </span>
+                    <span style={{ fontWeight:700, color:'var(--mmb-accent)' }}>
+                      {value} <span style={{ fontWeight:400, color:'var(--mmb-muted)' }}>({trafficTotal>0?Math.round((value/trafficTotal)*100):0}%)</span>
+                    </span>
+                  </div>
+                  <div style={{ height:5, background:'var(--mmb-border)', borderRadius:99, overflow:'hidden' }}>
+                    <div style={{ height:'100%', borderRadius:99, background:color, width:`${trafficTotal>0?(value/trafficTotal)*100:0}%`, transition:'width .4s' }}/>
+                  </div>
+                </div>
+              ))}
+              {trafficTotal>0 && (
+                <div style={{ borderTop:'1px solid var(--mmb-border)', paddingTop:8, display:'flex', justifyContent:'space-between', fontSize:12 }}>
+                  <span style={{ color:'var(--mmb-muted)' }}>Total</span>
+                  <strong style={{ color:'var(--mmb-accent)' }}>{trafficTotal.toLocaleString()}</strong>
+                </div>
+              )}
             </div>
-          </div>
-          <div className="space-y-2">
-            {pagedRows.map((r) => (
-              <div
-                key={r.id}
-                className={`flex items-center gap-3 rounded-xl px-4 py-2.5 ${
-                  r.orphan ? 'bg-amber-900/10 border border-amber-800/30' : 'bg-gray-800/50'
-                }`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    r.status === 'running' ? 'bg-green-500' : 'bg-gray-600'
-                  }`}
-                />
-                <span className="text-white text-sm font-medium flex-1 truncate">{r.name}</span>
-                <span className="text-xs text-gray-500 hidden sm:inline">{r.os}</span>
-                <span className="text-green-400 text-xs font-bold">{r.views} views</span>
-                <span className="text-blue-400 text-xs">{formatWatchTime(r.watchTime)}</span>
-                <span className="text-red-400 text-xs">❤{r.likes}</span>
-                <span className="text-yellow-400 text-xs">🔔{r.subscribes}</span>
-                <span className="text-orange-400 text-xs">💬{r.comments}</span>
-              </div>
-            ))}
-            {profileRows.length === 0 && (
-              <p className="text-center text-gray-600 text-sm py-4">No data for this period.</p>
-            )}
-          </div>
-          {pageCount > 1 && (
-            <div className="flex justify-center gap-2 mt-4">
-              <button
-                type="button"
-                disabled={page === 0}
-                onClick={() => setPage((p) => p - 1)}
-                className="px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 disabled:opacity-40"
-              >
-                Prev
-              </button>
-              <span className="text-xs text-gray-500 self-center">
-                {page + 1} / {pageCount}
-              </span>
-              <button
-                type="button"
-                disabled={page >= pageCount - 1}
-                onClick={() => setPage((p) => p + 1)}
-                className="px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          )}
+          </Card>
         </div>
 
-        {(liveData?.recentActivity?.length ?? 0) > 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-            <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
-              <Activity size={16} className="text-pink-400" /> Recent activity
-            </h2>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
-              {liveData!.recentActivity!.slice(-30).reverse().map((e, i) => (
-                <div key={`${e.time}-${i}`} className="flex items-center gap-2 text-xs py-1 border-b border-gray-800/50">
-                  <span className="text-gray-600 w-36 shrink-0">
-                    {new Date(e.time).toLocaleString()}
+        {/* Per-profile table */}
+        <Card>
+          <CardHeader
+            title={`👤 Top Profiles (${profileRows.length})`}
+            action={
+              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                <div style={{ position:'relative' }}>
+                  <Search size={12} style={{ position:'absolute', left:8, top:'50%', transform:'translateY(-50%)', color:'var(--mmb-muted)' }}/>
+                  <input
+                    type="text" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}
+                    style={{
+                      paddingLeft:28, paddingRight:8, paddingTop:5, paddingBottom:5,
+                      borderRadius:6, border:'1px solid var(--mmb-border)',
+                      background:'var(--mmb-surface)', color:'var(--mmb-text)',
+                      fontSize:12, outline:'none', width:140,
+                    }}
+                  />
+                </div>
+                <select
+                  value={sortKey} onChange={e=>setSortKey(e.target.value as SortKey)}
+                  style={{ borderRadius:6, border:'1px solid var(--mmb-border)', background:'var(--mmb-surface)', color:'var(--mmb-text)', fontSize:12, padding:'5px 8px', outline:'none' }}
+                >
+                  <option value="views">Views</option>
+                  <option value="watchTime">Watch Time</option>
+                  <option value="likes">Likes</option>
+                  <option value="name">Name</option>
+                </select>
+              </div>
+            }
+          />
+          <table className="mmb-table">
+            <thead>
+              <tr>
+                <th>Profile</th>
+                <th>Views</th>
+                <th>Watch Time</th>
+                <th>Likes</th>
+                <th>Subscribes</th>
+                <th>Comments</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedRows.map(r => (
+                <tr key={r.id}>
+                  <td>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <span style={{ width:6, height:6, borderRadius:'50%', background:r.status==='running'?'var(--mmb-green)':'var(--mmb-border2)', display:'inline-block' }}/>
+                      <span style={{ fontWeight:600, color:'var(--mmb-text)' }}>{r.name}</span>
+                      {r.orphan && <Badge color="yellow">removed</Badge>}
+                    </div>
+                  </td>
+                  <td><strong style={{ color:'var(--mmb-accent)' }}>{r.views.toLocaleString()}</strong></td>
+                  <td style={{ color:'var(--mmb-blue)' }}>{formatWatchTime(Math.round(r.watchTime||0))}</td>
+                  <td style={{ color:'var(--mmb-red)' }}>❤ {r.likes}</td>
+                  <td style={{ color:'var(--mmb-yellow)' }}>🔔 {r.subscribes}</td>
+                  <td style={{ color:'var(--mmb-green)' }}>💬 {r.comments}</td>
+                </tr>
+              ))}
+              {pagedRows.length===0 && (
+                <tr><td colSpan={6} style={{ textAlign:'center', padding:'30px', color:'var(--mmb-muted)' }}>No data for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+          {pageCount>1 && (
+            <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:8, padding:'12px', borderTop:'1px solid var(--mmb-border)' }}>
+              <button disabled={page===0} onClick={()=>setPage(p=>p-1)} style={{ padding:'4px 12px', borderRadius:6, border:'1px solid var(--mmb-border)', background:'var(--mmb-surface)', color:'var(--mmb-text)', fontSize:12, cursor:'pointer', opacity:page===0?.4:1 }}>← Prev</button>
+              <span style={{ fontSize:12, color:'var(--mmb-muted)' }}>{page+1} / {pageCount}</span>
+              <button disabled={page>=pageCount-1} onClick={()=>setPage(p=>p+1)} style={{ padding:'4px 12px', borderRadius:6, border:'1px solid var(--mmb-border)', background:'var(--mmb-surface)', color:'var(--mmb-text)', fontSize:12, cursor:'pointer', opacity:page>=pageCount-1?.4:1 }}>Next →</button>
+            </div>
+          )}
+        </Card>
+
+        {/* Recent activity */}
+        {(data?.recentActivity?.length??0)>0 && (
+          <Card>
+            <CardHeader title="⚡ Recent Activity"/>
+            <div style={{ maxHeight:240, overflowY:'auto' }}>
+              {data!.recentActivity!.slice(-30).reverse().map((e:any,i:number)=>(
+                <div key={`${e.time}-${i}`} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 16px', borderBottom:'1px solid var(--mmb-border)', fontSize:12 }}>
+                  <span style={{ color:'var(--mmb-muted)', minWidth:120, flexShrink:0 }}>
+                    {(() => { try { const t = e.time ?? e.ts ?? 0; return new Date(typeof t === 'number' ? t : Date.parse(String(t))).toLocaleString(); } catch { return '—'; } })()}
                   </span>
-                  <span className="text-gray-400 truncate flex-1">
-                    {profileById.get(e.profileId)?.name || e.profileId.slice(0, 10)}
-                  </span>
-                  <span className="text-white">{actionLabel(e.action)}</span>
-                  {e.value != null && e.value > 0 && (
-                    <span className="text-gray-500">+{e.value}</span>
-                  )}
+                  <span style={{ color:'var(--mmb-accent)', fontWeight:600 }}>{profileById.get(e.profileId)?.name||e.profileId.slice(0,10)}</span>
+                  <span style={{ color:'var(--mmb-text2)' }}>{e.action}</span>
+                  {e.value>0 && <span style={{ color:'var(--mmb-muted)' }}>+{e.value}</span>}
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
 
-        <RateLimitDashboard profiles={profiles} />
+        <RateLimitDashboard profiles={profiles}/>
       </div>
-    </div>
-  );
-}
-
-function StatMini({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="bg-gray-800/50 rounded-xl p-3">
-      <div className="text-lg font-bold text-white">{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
-    </div>
-  );
-}
-
-function TrafficBar({
-  label,
-  count,
-  total,
-  color,
-}: {
-  label: string;
-  count: number;
-  total: number;
-  color: string;
-}) {
-  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-  return (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-gray-400">{label}</span>
-        <span className="text-white">{count}</span>
-      </div>
-      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-        <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-[10px] text-gray-600">{pct}%</span>
-    </div>
+    </PageShell>
   );
 }

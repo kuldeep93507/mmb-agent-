@@ -1,25 +1,34 @@
 import {
-  LayoutDashboard, Users, Settings, FileText, Cpu, Server, Tv, Calendar, Gamepad2, BarChart3, MessageSquare, Shuffle, Link, PanelLeftClose, PanelLeftOpen, MonitorPlay, Zap, Mail,
+  LayoutDashboard, Users, Settings, Tv, Calendar, Gamepad2, BarChart3,
+  MessageSquare, Shuffle, Link, MonitorPlay, Zap, FileText,
+  Cpu, Mail, Server, Shield,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { backendFetch } from '../services/backendOrigin';
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'monitor', label: 'Live Monitor', icon: MonitorPlay },
-  { id: 'profiles', label: 'Profiles', icon: Users },
-  { id: 'channels', label: 'Channels', icon: Tv },
-  { id: 'engagement', label: 'Engagement', icon: Zap },
-  { id: 'video-shuffle', label: 'Video Shuffle', icon: Shuffle },
-  { id: 'backlinks', label: 'Backlinks', icon: Link },
-  { id: 'scheduler', label: 'Scheduler', icon: Calendar },
-  { id: 'manual', label: 'Manual Control', icon: Gamepad2 },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-  { id: 'comments', label: 'Comments', icon: MessageSquare },
-  { id: 'jobs', label: 'Job Queue', icon: Cpu },
-  { id: 'gmail-setup', label: 'Gmail Setup', icon: Mail },
-  { id: 'logs', label: 'Activity Logs', icon: FileText },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { group: 'MAIN', items: [
+    { id: 'dashboard',    label: 'Dashboard',     icon: LayoutDashboard },
+    { id: 'scheduler',    label: 'Scheduler',     icon: Calendar },
+    { id: 'profiles',     label: 'Profiles',      icon: Users },
+    { id: 'video-shuffle',label: 'Video Shuffle', icon: Shuffle },
+  ]},
+  { group: 'AUTOMATION', items: [
+    { id: 'analytics',    label: 'Analytics',     icon: BarChart3 },
+    { id: 'engagement',   label: 'Engagement',    icon: Zap },
+    { id: 'channels',     label: 'Channels',      icon: Tv },
+    { id: 'backlinks',    label: 'Backlinks',     icon: Link },
+    { id: 'comments',     label: 'Comments',      icon: MessageSquare },
+    { id: 'monitor',      label: 'Live Monitor',  icon: MonitorPlay },
+  ]},
+  { group: 'SYSTEM', items: [
+    { id: 'manual',       label: 'Manual Control',icon: Gamepad2 },
+    { id: 'jobs',         label: 'Job Queue',     icon: Cpu },
+    { id: 'gmail-setup',  label: 'Gmail Setup',   icon: Mail },
+    { id: 'proxy',        label: 'Proxy Settings',icon: Shield },
+    { id: 'logs',         label: 'Activity Logs', icon: FileText },
+    { id: 'settings',     label: 'Settings',      icon: Settings },
+  ]},
 ];
 
 interface SidebarProps {
@@ -33,132 +42,233 @@ interface SidebarProps {
 export default function Sidebar({ activeTab, setActiveTab, runningCount, pendingJobs, activeChannels = 0 }: SidebarProps) {
   const [multiloginStatus, setMultiloginStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [backendStatus, setBackendStatus] = useState<'checking' | 'running' | 'down'>('checking');
+  const [collapsed, setCollapsed] = useState(false);
 
-  // Real health check every 30 seconds
   useEffect(() => {
     const check = async () => {
-      // Check backend
       try {
-        const res = await backendFetch('/api/health', { signal: AbortSignal.timeout(3000) });
+        const res = await backendFetch('/api/health', { signal: AbortSignal.timeout(8000) });
         setBackendStatus(res.ok ? 'running' : 'down');
-      } catch {
-        setBackendStatus('down');
-      }
-      // Check Multilogin — ping local launcher (no cloud auth needed)
-      // api.multilogin.com can be down but launcher can still work
+      } catch { setBackendStatus('down'); }
       try {
-        const provider = (import.meta.env.VITE_BROWSER_PROVIDER || 'multilogin').toLowerCase();
-        const res = await backendFetch(`/api/providers/ping?provider=${provider}`, {
-          signal: AbortSignal.timeout(8000),
-        });
+        let provider = 'multilogin';
+        try {
+          const settingsRes = await backendFetch('/api/settings', { signal: AbortSignal.timeout(5000) });
+          if (settingsRes.ok) {
+            const d = await settingsRes.json();
+            if (d?.settings?.browserProvider) provider = String(d.settings.browserProvider).toLowerCase();
+          }
+        } catch { /* use default */ }
+        const res = await backendFetch(`/api/providers/ping?provider=${provider}`, { signal: AbortSignal.timeout(8000) });
         const data = await res.json();
         setMultiloginStatus(data.code === 0 ? 'connected' : 'disconnected');
-      } catch {
-        setMultiloginStatus('disconnected');
-      }
+      } catch { setMultiloginStatus('disconnected'); }
     };
     check();
     const interval = setInterval(check, 30000);
     return () => clearInterval(interval);
   }, []);
-  const [collapsed, setCollapsed] = useState(false);
+
+  const totalProfiles = 50; // fixed fleet size
+
+  const getBadge = (id: string) => {
+    if (id === 'monitor' && runningCount > 0) return { count: runningCount, color: 'green' };
+    if (id === 'profiles' && runningCount > 0) return { count: runningCount, color: 'green' };
+    if (id === 'channels' && activeChannels > 0) return { count: activeChannels, color: 'blue' };
+    if (id === 'jobs' && pendingJobs > 0) return { count: pendingJobs, color: 'yellow' };
+    return null;
+  };
 
   return (
-    <aside className={`${collapsed ? 'w-16' : 'w-64'} bg-gray-950 border-r border-gray-800 flex flex-col h-full transition-all duration-300`}>
-      {/* Logo + Toggle */}
-      <div className={`${collapsed ? 'px-3' : 'px-6'} py-5 border-b border-gray-800`}>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-600 via-red-500 to-orange-500 flex items-center justify-center shadow-lg shadow-red-900/60 flex-shrink-0 relative overflow-hidden">
-            {/* Animated glow ring */}
-            <div className="absolute inset-0 rounded-xl border border-white/20 animate-pulse" />
-            <span className="text-white font-black text-sm tracking-tight relative z-10">MMB</span>
+    <aside
+      style={{
+        width: collapsed ? '64px' : '220px',
+        background: 'var(--mmb-surface)',
+        borderRight: '1px solid var(--mmb-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        transition: 'width 0.25s cubic-bezier(.4,0,.2,1)',
+        flexShrink: 0,
+        boxShadow: '2px 0 8px rgba(0,0,0,.05)',
+        zIndex: 10,
+      }}
+    >
+      {/* Logo */}
+      <div style={{ padding: collapsed ? '16px 12px' : '16px 16px', borderBottom: '1px solid var(--mmb-border)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+            background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 4px 12px rgba(79,70,229,.35)',
+          }}>
+            <span style={{ color: '#fff', fontWeight: 900, fontSize: 11, letterSpacing: '-.5px' }}>MMB</span>
           </div>
           {!collapsed && (
-            <div className="flex-1">
-              <div className="text-white font-bold text-sm leading-tight tracking-wide">MMB AGENT</div>
-              <div className="text-gray-500 text-xs">Co-founder Kuldeep</div>
+            <div>
+              <div style={{ color: 'var(--mmb-text)', fontWeight: 700, fontSize: 13, lineHeight: 1.2 }}>MMB AGENT</div>
+              <div style={{ color: 'var(--mmb-muted)', fontSize: 11 }}>24/7 PRO</div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Toggle Button */}
-      <button onClick={() => setCollapsed(!collapsed)}
-        className={`${collapsed ? 'mx-auto' : 'mx-3'} mt-2 mb-1 flex items-center justify-center gap-2 px-2 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-all`}>
-        {collapsed ? <PanelLeftOpen size={16} /> : <><PanelLeftClose size={14} /><span className="text-xs">Collapse</span></>}
-      </button>
-
-      {/* Navigation */}
-      <nav className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
-        {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            title={collapsed ? label : undefined}
-            className={`w-full flex items-center gap-3 ${collapsed ? 'justify-center px-2' : 'px-3'} py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative group
-              ${activeTab === id
-                ? 'bg-red-600/20 text-red-400 border border-red-600/30'
-                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 border border-transparent'
-              }`}
-          >
-            <Icon size={16} className={`flex-shrink-0 ${activeTab === id ? 'text-red-400' : 'text-gray-500 group-hover:text-gray-300'}`} />
-            {!collapsed && <span>{label}</span>}
-            {!collapsed && id === 'monitor' && runningCount > 0 && (
-              <span className="ml-auto text-xs bg-green-600/30 text-green-400 border border-green-600/30 px-1.5 py-0.5 rounded-full animate-pulse">
-                {runningCount}
-              </span>
-            )}
-            {!collapsed && id === 'profiles' && runningCount > 0 && (
-              <span className="ml-auto text-xs bg-green-600/30 text-green-400 border border-green-600/30 px-1.5 py-0.5 rounded-full">
-                {runningCount}
-              </span>
-            )}
-            {!collapsed && id === 'channels' && activeChannels > 0 && (
-              <span className="ml-auto text-xs bg-blue-600/30 text-blue-400 border border-blue-600/30 px-1.5 py-0.5 rounded-full">
-                {activeChannels}
-              </span>
-            )}
-            {!collapsed && id === 'jobs' && pendingJobs > 0 && (
-              <span className="ml-auto text-xs bg-yellow-600/30 text-yellow-400 border border-yellow-600/30 px-1.5 py-0.5 rounded-full">
-                {pendingJobs}
-              </span>
-            )}
-            {/* Tooltip for collapsed mode */}
-            {collapsed && (
-              <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                {label}
+      {/* Nav */}
+      <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 8px', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {NAV_ITEMS.map(({ group, items }) => (
+          <div key={group} style={{ marginBottom: 4 }}>
+            {!collapsed && (
+              <div style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
+                color: 'var(--mmb-muted)', padding: '10px 8px 4px',
+                textTransform: 'uppercase',
+              }}>
+                {group}
               </div>
             )}
-          </button>
+            {items.map(({ id, label, icon: Icon }) => {
+              const isActive = activeTab === id;
+              const badge = getBadge(id);
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  title={collapsed ? label : undefined}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: collapsed ? '8px 0' : '8px 10px',
+                    justifyContent: collapsed ? 'center' : 'flex-start',
+                    borderRadius: 8,
+                    border: 'none',
+                    borderLeft: isActive ? '3px solid var(--mmb-accent)' : '3px solid transparent',
+                    background: isActive ? 'var(--mmb-accent-bg)' : 'transparent',
+                    color: isActive ? 'var(--mmb-accent)' : 'var(--mmb-muted)',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: isActive ? 600 : 500,
+                    transition: 'all .15s',
+                    marginBottom: 1,
+                    position: 'relative',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'var(--mmb-surface2)';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--mmb-text)';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                      (e.currentTarget as HTMLButtonElement).style.color = 'var(--mmb-muted)';
+                    }
+                  }}
+                >
+                  <Icon size={15} style={{ flexShrink: 0 }} />
+                  {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{label}</span>}
+                  {!collapsed && badge && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99,
+                      background: badge.color === 'green' ? 'var(--mmb-green-bg)' : badge.color === 'blue' ? 'var(--mmb-blue-bg)' : 'var(--mmb-yellow-bg)',
+                      color: badge.color === 'green' ? 'var(--mmb-green)' : badge.color === 'blue' ? 'var(--mmb-blue)' : 'var(--mmb-yellow)',
+                    }}>
+                      {badge.count}
+                    </span>
+                  )}
+                  {/* Collapsed tooltip */}
+                  {collapsed && (
+                    <div style={{
+                      position: 'absolute', left: '100%', marginLeft: 8,
+                      padding: '4px 10px', borderRadius: 6, fontSize: 12,
+                      background: 'var(--mmb-text)', color: 'var(--mmb-surface)',
+                      whiteSpace: 'nowrap', pointerEvents: 'none',
+                      opacity: 0, transition: 'opacity .15s', zIndex: 50,
+                    }}
+                    className="sidebar-tooltip">
+                      {label}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         ))}
       </nav>
 
-      {/* Bottom Status */}
+      {/* Footer */}
       {!collapsed ? (
-        <div className="px-4 py-4 border-t border-gray-800">
-          <div className="bg-gray-900 rounded-xl p-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <Server size={12} className="text-gray-500" />
-              <span className="text-gray-500 text-xs">System Status</span>
+        <div style={{ padding: '12px', borderTop: '1px solid var(--mmb-border)', flexShrink: 0 }}>
+          {/* Workers progress bar */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 11, color: 'var(--mmb-muted)', fontWeight: 500 }}>Workers Active</span>
+              <span style={{ fontSize: 11, color: 'var(--mmb-accent)', fontWeight: 700 }}>{runningCount}/{totalProfiles}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${multiloginStatus === 'connected' ? 'bg-green-500 animate-pulse' : multiloginStatus === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-gray-400 text-xs">
-                Browser: {multiloginStatus === 'connected' ? 'Connected' : multiloginStatus === 'checking' ? 'Checking...' : 'Disconnected'}
+            <div style={{ height: 4, background: 'var(--mmb-border)', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 99,
+                background: 'linear-gradient(90deg, var(--mmb-accent), #7c3aed)',
+                width: `${(runningCount / totalProfiles) * 100}%`,
+                transition: 'width .4s ease',
+              }} />
+            </div>
+          </div>
+          {/* Status dots */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <div style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: backendStatus === 'running' ? '#22c55e' : backendStatus === 'checking' ? '#f59e0b' : '#ef4444',
+                boxShadow: backendStatus === 'running' ? '0 0 4px #22c55e' : 'none',
+              }} />
+              <span style={{ color: 'var(--mmb-muted)' }}>
+                API: {backendStatus === 'running' ? 'Online' : backendStatus === 'checking' ? 'Checking...' : 'Offline'}
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'running' ? 'bg-blue-500 animate-pulse' : backendStatus === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-gray-400 text-xs">
-                Backend: {backendStatus === 'running' ? 'Running' : backendStatus === 'checking' ? 'Checking...' : 'Down ⚠️'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <div style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: multiloginStatus === 'connected' ? '#22c55e' : multiloginStatus === 'checking' ? '#f59e0b' : '#ef4444',
+                boxShadow: multiloginStatus === 'connected' ? '0 0 4px #22c55e' : 'none',
+              }} />
+              <span style={{ color: 'var(--mmb-muted)' }}>
+                Browser: {multiloginStatus === 'connected' ? 'Ready' : multiloginStatus === 'checking' ? 'Checking...' : 'Offline'}
               </span>
             </div>
           </div>
+          {/* Collapse button */}
+          <button
+            onClick={() => setCollapsed(true)}
+            style={{
+              marginTop: 10, width: '100%', padding: '5px', borderRadius: 6,
+              border: '1px solid var(--mmb-border)', background: 'transparent',
+              color: 'var(--mmb-muted)', fontSize: 11, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            }}
+          >
+            <Server size={11} />
+            Collapse
+          </button>
         </div>
       ) : (
-        <div className="px-2 py-3 border-t border-gray-800 flex flex-col items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${multiloginStatus === 'connected' ? 'bg-green-500 animate-pulse' : multiloginStatus === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} title={`Browser: ${multiloginStatus}`} />
-          <div className={`w-2 h-2 rounded-full ${backendStatus === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-red-500'}`} title={`Backend: ${backendStatus}`} />
+        <div style={{ padding: '10px 0', borderTop: '1px solid var(--mmb-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <div style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: backendStatus === 'running' ? '#22c55e' : '#ef4444',
+          }} title={`API: ${backendStatus}`} />
+          <div style={{
+            width: 8, height: 8, borderRadius: '50%',
+            background: multiloginStatus === 'connected' ? '#22c55e' : '#ef4444',
+          }} title={`Browser: ${multiloginStatus}`} />
+          <button onClick={() => setCollapsed(false)} style={{
+            background: 'transparent', border: 'none', color: 'var(--mmb-muted)',
+            cursor: 'pointer', padding: 4, borderRadius: 4,
+          }} title="Expand sidebar">
+            <Server size={14} />
+          </button>
         </div>
       )}
     </aside>

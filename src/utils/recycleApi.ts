@@ -3,7 +3,7 @@ import { backendFetch } from '../services/backendOrigin';
 export interface RecycleSlotStatus {
   slotId: string;
   profileName: string;
-  currentProfileId: string;
+  currentProfileId: string | null | undefined;
   status: string;
   cycleCount: number;
   cooldownUntil: number | null;
@@ -30,11 +30,26 @@ export interface RecycleProfileInput {
   proxyType?: string;
 }
 
+function normalizeRecycleStatus(data: unknown): RecycleStatus | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = data as Record<string, unknown>;
+  const inner = raw.slots ? raw : (raw.status as Record<string, unknown> | undefined);
+  if (!inner || !Array.isArray(inner.slots)) return null;
+  return {
+    enabled: Boolean(inner.enabled),
+    cooldownMinMs: Number(inner.cooldownMinMs ?? 0),
+    cooldownMaxMs: Number(inner.cooldownMaxMs ?? 0),
+    activeSlots: Number(inner.activeSlots ?? 0),
+    slots: inner.slots as RecycleSlotStatus[],
+  };
+}
+
 export async function fetchRecycleStatus(): Promise<RecycleStatus | null> {
   try {
     const res = await backendFetch('/api/recycle/status');
     if (!res.ok) return null;
-    return await res.json();
+    const data = await res.json();
+    return normalizeRecycleStatus(data);
   } catch {
     return null;
   }
@@ -53,7 +68,8 @@ export async function startRecycleLoop(opts: {
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    return { ok: true, status: data.status };
+    const status = normalizeRecycleStatus(data.status ?? data);
+    return { ok: true, status: status ?? undefined };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Network error' };
   }

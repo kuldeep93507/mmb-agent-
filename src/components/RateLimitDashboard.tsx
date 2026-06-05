@@ -7,6 +7,7 @@ import {
   resetTodayEngagement,
   type ProfileAnalytics,
 } from '../utils/analyticsApi';
+import { Card, CardHeader, Btn, Badge } from './ui';
 
 interface RateLimitDashboardProps {
   profiles: Profile[];
@@ -48,73 +49,64 @@ export default function RateLimitDashboard({ profiles }: RateLimitDashboardProps
   const totalComments = Object.values(perProfile).reduce((s, p) => s + (p.comments || 0), 0);
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-white font-semibold flex items-center gap-2">
-          📊 Rate Limits (Today)
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40 font-normal">Coming Soon — tracking only</span>
-          {loading && <span className="text-xs text-yellow-400 font-normal">syncing…</span>}
-        </h2>
-        <button
-          type="button"
-          onClick={resetAll}
-          disabled={resetting}
-          className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-all disabled:opacity-50"
-        >
-          <RefreshCw size={11} className={resetting ? 'animate-spin' : ''} /> Reset Counts
-        </button>
-      </div>
+    <Card>
+      <CardHeader
+        title="Engagement Rate Limits (Today)"
+        action={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {loading && <Badge color="yellow">syncing</Badge>}
+            <Badge color="green">Live · 15s</Badge>
+            <Btn size="sm" onClick={resetAll} disabled={resetting} icon={<RefreshCw size={11}/>}>
+              Reset Counts
+            </Btn>
+          </div>
+        }
+      />
+      <div style={{ padding: '14px 16px 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }}>
+          {[
+            { icon: Heart, label: 'Likes', val: totalLikes, color: 'var(--mmb-red)', bg: 'var(--mmb-red-bg)' },
+            { icon: Bell, label: 'Subscribes', val: totalSubs, color: 'var(--mmb-blue)', bg: 'var(--mmb-blue-bg)' },
+            { icon: MessageSquare, label: 'Comments', val: totalComments, color: 'var(--mmb-green)', bg: 'var(--mmb-green-bg)' },
+          ].map(({ icon: Icon, label, val, color, bg }) => (
+            <div key={label} style={{ background: bg, borderRadius: 10, padding: 14, textAlign: 'center' }}>
+              <Icon size={16} style={{ color, margin: '0 auto 6px', display: 'block' }}/>
+              <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{val}</div>
+              <div style={{ fontSize: 11, color: 'var(--mmb-muted)', marginTop: 4 }}>{label} today</div>
+            </div>
+          ))}
+        </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <div className="bg-red-900/20 border border-red-800/30 rounded-xl p-3 text-center">
-          <Heart size={16} className="text-red-400 mx-auto mb-1" />
-          <div className="text-xl font-bold text-red-400">{totalLikes}</div>
-          <div className="text-xs text-gray-500">Likes Today</div>
-        </div>
-        <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-3 text-center">
-          <Bell size={16} className="text-blue-400 mx-auto mb-1" />
-          <div className="text-xl font-bold text-blue-400">{totalSubs}</div>
-          <div className="text-xs text-gray-500">Subscribes Today</div>
-        </div>
-        <div className="bg-green-900/20 border border-green-800/30 rounded-xl p-3 text-center">
-          <MessageSquare size={16} className="text-green-400 mx-auto mb-1" />
-          <div className="text-xl font-bold text-green-400">{totalComments}</div>
-          <div className="text-xs text-gray-500">Comments Today</div>
-        </div>
-      </div>
-
-      <div className="space-y-2 max-h-60 overflow-y-auto">
-        {engagementProfiles.length === 0 ? (
-          <p className="text-center text-gray-600 text-sm py-4">
-            No engagement enabled. Enable Like/Subscribe/Comment in Profile Settings.
-          </p>
-        ) : (
-          engagementProfiles.slice(0, 20).map((p) => {
-            const count = perProfile[p.id] || { likes: 0, subscribes: 0, comments: 0, views: 0, watchTime: 0 };
-            const caps = getProfileEngagementConfig(p.id);
-            return (
-              <div key={p.id} className="bg-gray-800/50 rounded-xl px-4 py-3">
-                <span className="text-white text-xs font-medium block mb-2 truncate">{p.name}</span>
-                <div className="grid grid-cols-3 gap-3">
-                  {caps.likeEnabled && (
-                    <CapBar label="👍 Likes" used={count.likes || 0} cap={caps.likeDailyCap} />
-                  )}
-                  {caps.subscribeEnabled && (
-                    <CapBar label="🔔 Subs" used={count.subscribes || 0} cap={caps.subscribeDailyCap} />
-                  )}
-                  {caps.commentEnabled && (
-                    <CapBar label="💬 Comments" used={count.comments || 0} cap={caps.commentDailyCap} />
-                  )}
+        <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {engagementProfiles.length === 0 ? (
+            <p style={{ textAlign: 'center', color: 'var(--mmb-muted)', fontSize: 13, padding: '20px 0' }}>
+              No engagement enabled. Enable Like/Subscribe/Comment in Profile Settings.
+            </p>
+          ) : (
+            engagementProfiles.slice(0, 20).map((p) => {
+              const count = perProfile[p.id] || { likes: 0, subscribes: 0, comments: 0, views: 0, watchTime: 0 };
+              const caps = getProfileEngagementConfig(p.id);
+              return (
+                <div key={p.id} style={{
+                  background: 'var(--mmb-surface2)', borderRadius: 10, padding: '12px 14px',
+                  border: '1px solid var(--mmb-border)',
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--mmb-text)', display: 'block', marginBottom: 8 }}>{p.name}</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+                    {caps.likeEnabled && <CapBar label="Likes" used={count.likes || 0} cap={caps.likeDailyCap}/>}
+                    {caps.subscribeEnabled && <CapBar label="Subscribes" used={count.subscribes || 0} cap={caps.subscribeDailyCap}/>}
+                    {caps.commentEnabled && <CapBar label="Comments" used={count.comments || 0} cap={caps.commentDailyCap}/>}
+                  </div>
                 </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--mmb-muted)', marginTop: 12, textAlign: 'center' }}>
+          Counts from live analytics · Caps set in Profile Settings · Resets at midnight (server)
+        </p>
       </div>
-      <p className="text-xs text-gray-600 mt-3 text-center">
-        Midnight reset (server) • Caps in Profile Settings • Daily cap enforcement — <span className="text-amber-500/80">Coming Soon</span>
-      </p>
-    </div>
+    </Card>
   );
 }
 
@@ -123,17 +115,15 @@ function CapBar({ label, used, cap }: { label: string; used: number; cap: number
   const atCap = used >= cap;
   return (
     <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-gray-400">{label}</span>
-        <span className={atCap ? 'text-red-400' : 'text-green-400'}>
-          {used}/{cap}
-        </span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+        <span style={{ color: 'var(--mmb-muted)' }}>{label}</span>
+        <span style={{ color: atCap ? 'var(--mmb-red)' : 'var(--mmb-green)', fontWeight: 600 }}>{used}/{cap}</span>
       </div>
-      <div className="h-1.5 bg-gray-700 rounded-full">
-        <div
-          className={`h-full rounded-full ${atCap ? 'bg-red-500' : 'bg-green-500'}`}
-          style={{ width: `${pct}%` }}
-        />
+      <div style={{ height: 6, background: 'var(--mmb-border)', borderRadius: 99, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', borderRadius: 99, width: `${pct}%`,
+          background: atCap ? 'var(--mmb-red)' : 'var(--mmb-green)', transition: 'width .3s',
+        }}/>
       </div>
     </div>
   );

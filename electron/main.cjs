@@ -61,58 +61,7 @@ function safeCloseWindow(win) {
   }
 }
 
-function wireBackendModulePaths() {
-  if (!app.isPackaged) return;
-
-  const appPackageJson = path.join(app.getAppPath(), 'package.json');
-  const appRequire = require('module').createRequire(appPackageJson);
-  const Module = require('module');
-  const originalLoad = Module._load;
-
-  Module._load = function patchedLoad(request, parent, isMain) {
-    try {
-      return originalLoad.call(this, request, parent, isMain);
-    } catch (err) {
-      const isMissing = err && (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND');
-      const isBare = request && !request.startsWith('.') && !request.startsWith('/') && !request.startsWith('\\');
-      if (isMissing && isBare) {
-        try {
-          return appRequire(request);
-        } catch {
-          /* fall through */
-        }
-      }
-      throw err;
-    }
-  };
-
-  logLine(`Backend module loader patched via ${appPackageJson}`);
-}
-
-function loadPackagedEnv() {
-  if (!app.isPackaged) return;
-  try {
-    const loadEnv = require(path.join(process.resourcesPath, 'server', 'providers', 'loadEnv.cjs'));
-    const candidates = [
-      path.join(process.resourcesPath, 'server', 'runtime.env'),
-      path.join(path.dirname(process.execPath), '.env'),
-      path.join(process.resourcesPath, 'server', '.env'),
-    ];
-    for (const envPath of candidates) {
-      if (fs.existsSync(envPath)) {
-        loadEnv(envPath);
-        logLine(`Loaded env: ${envPath}`);
-        break;
-      }
-    }
-  } catch (err) {
-    logLine(`Could not load packaged env: ${err.message}`);
-  }
-  if (!process.env.BACKEND_API_KEY && !process.env.MMB_API_TOKEN) {
-    process.env.BACKEND_API_KEY = 'mmb-local-dev-2025';
-    logLine('Using default BACKEND_API_KEY for packaged app');
-  }
-}
+// (Node.js backend module patching removed — Python backend use ho raha hai)
 
 function waitForBackend(maxMs = 45000) {
   const port = getBackendPort();
@@ -127,7 +76,9 @@ function waitForBackend(maxMs = 45000) {
         resolve(false);
         return;
       }
-      const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
+      const req = http.get(`http://127.0.0.1:${port}/api/health`, {
+        headers: { 'x-api-key': process.env.BACKEND_API_KEY || 'mmb-local-dev-2025' },
+      }, (res) => {
         res.resume();
         resolve(res.statusCode === 200);
       });
@@ -255,42 +206,139 @@ function createMainWindow() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// START BACKEND
+// START BACKEND — Python Flask server
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let _pythonProcess = null;
+
+function loadPackagedEnvForPython() {
+  // .env file load karo — Python server ko env vars chahiye
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'server_python', 'runtime.env'),
+        path.join(path.dirname(process.execPath), '.env'),
+        path.join(process.resourcesPath, '.env'),
+      ]
+    : [
+        path.join(__dirname, '..', '.env'),
+      ];
+
+  for (const envPath of candidates) {
+    if (fs.existsSync(envPath)) {
+      logLine(`Loading env for Python: ${envPath}`);
+      // Simple .env parser — dotenv Python side pe bhi load karta hai
+      try {
+        const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx < 0) continue;
+          const key = trimmed.slice(0, eqIdx).trim();
+          const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+          if (key && !process.env[key]) process.env[key] = val;
+        }
+      } catch (e) {
+        logLine(`Env parse warning: ${e.message}`);
+      }
+      break;
+    }
+  }
+
+  // Default API key agar set nahi hai
+  if (!process.env.BACKEND_API_KEY) {
+    process.env.BACKEND_API_KEY = 'mmb-local-dev-2025';
+  }
+}
+
+function findPythonExecutable() {
+  // Packaged app mein bundled python, dev mein system python
+  if (app.isPackaged) {
+    const bundled = path.join(process.resourcesPath, 'python', 'python.exe');
+    if (fs.existsSync(bundled)) return bundled;
+  }
+  // System python — 'python' ya 'python3'
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
 function startBackend() {
-  loadPackagedEnv();
-  wireBackendModulePaths();
+  loadPackagedEnvForPython();
 
-  const serverPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'server', 'index.cjs')
-    : path.join(__dirname, '..', 'server', 'index.cjs');
+  const pythonExe = findPythonExecutable();
 
-  logLine(`Loading backend: ${serverPath}`);
+  const scriptPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'server_python', 'main.py')
+    : path.join(__dirname, '..', 'server_python', 'main.py');
 
-  if (!fs.existsSync(serverPath)) {
-    backendLoadError = `Backend not found: ${serverPath}`;
+  logLine(`Starting Python backend: ${pythonExe} ${scriptPath}`);
+
+  if (!fs.existsSync(scriptPath)) {
+    backendLoadError = `Python backend not found: ${scriptPath}`;
     throw new Error(backendLoadError);
   }
 
-  const _realExit = process.exit.bind(process);
-  process.exit = (code) => {
-    const msg = backendLoadError
-      || `The backend stopped during startup (code ${code ?? 0}).\n\nCommon fixes:\n• Close any other MMB Agent window\n• Restart your PC\n• Reinstall from the latest setup file`;
-    logLine(`process.exit(${code ?? 0}) intercepted`);
-    if (!isQuitting) {
-      showFatalError('MMB Agent — Backend stopped', msg);
-    }
-    isQuitting = true;
-    app.quit();
-    setTimeout(() => _realExit(code ?? 0), 5000);
+  const env = {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',   // stdout/stderr immediately flush ho
+    PYTHONIOENCODING: 'utf-8',
   };
 
-  try {
-    require(serverPath);
-    logLine('Backend module loaded');
-  } catch (err) {
-    backendLoadError = err.stack || err.message;
-    throw err;
+  const { spawn } = require('child_process');
+  _pythonProcess = spawn(pythonExe, [scriptPath], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: app.isPackaged
+      ? process.resourcesPath
+      : path.join(__dirname, '..'),
+  });
+
+  _pythonProcess.stdout.on('data', (data) => {
+    const lines = data.toString().trim().split('\n');
+    lines.forEach(line => { if (line.trim()) logLine(`[Python] ${line.trim()}`); });
+  });
+
+  _pythonProcess.stderr.on('data', (data) => {
+    const lines = data.toString().trim().split('\n');
+    lines.forEach(line => { if (line.trim()) logLine(`[Python ERR] ${line.trim()}`); });
+  });
+
+  _pythonProcess.on('error', (err) => {
+    backendLoadError = `Python spawn error: ${err.message}`;
+    logLine(backendLoadError);
+    if (!isQuitting) {
+      showFatalError(
+        'MMB Agent — Python not found',
+        `Could not start Python backend.\n\nError: ${err.message}\n\nFix: Python 3.10+ install karo aur PATH mein add karo.`,
+      );
+      isQuitting = true;
+      app.quit();
+    }
+  });
+
+  _pythonProcess.on('exit', (code, signal) => {
+    logLine(`Python backend exited | code=${code} signal=${signal}`);
+    if (!isQuitting && code !== 0 && signal !== 'SIGTERM') {
+      showFatalError(
+        'MMB Agent — Backend stopped',
+        `Python server unexpectedly stopped (code ${code}).\n\nApp restart karo.`,
+      );
+      isQuitting = true;
+      app.quit();
+    }
+  });
+
+  logLine('Python backend process spawned');
+}
+
+function stopPythonBackend() {
+  if (_pythonProcess && !_pythonProcess.killed) {
+    logLine('Stopping Python backend...');
+    _pythonProcess.kill('SIGTERM');
+    // Force kill after 5s agar graceful shutdown nahi hua
+    setTimeout(() => {
+      if (_pythonProcess && !_pythonProcess.killed) {
+        _pythonProcess.kill('SIGKILL');
+      }
+    }, 5000);
   }
 }
 
@@ -366,5 +414,5 @@ app.on('before-quit', () => {
   }
   safeCloseWindow(splashWindow);
   splashWindow = null;
-  try { process.emit('SIGTERM'); } catch { /* ignore */ }
+  stopPythonBackend();
 });

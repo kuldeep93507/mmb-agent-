@@ -4,6 +4,8 @@
  * Gets ALL videos from a channel (not limited to 15 like RSS)
  */
 
+import { backendFetch } from './backendOrigin';
+
 export interface YouTubeVideo {
   videoId: string;
   title: string;
@@ -34,9 +36,14 @@ export async function fetchChannelFromRSS(channelId: string): Promise<YouTubeCha
   // Resolve YouTube URL to channel ID / handle
   const resolved = resolveChannelInput(channelId);
 
-  const res = await fetch(`/youtube-feed?channel_id=${encodeURIComponent(resolved)}`);
+  const res = await backendFetch(`/api/youtube/feed?channel_id=${encodeURIComponent(resolved)}`);
   if (!res.ok) {
-    throw new Error(`Failed to fetch channel data: ${res.status} ${res.statusText}`);
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.error) detail = errBody.error;
+    } catch { /* ignore */ }
+    throw new Error(`Failed to fetch channel data: ${detail}`);
   }
 
   const data = await res.json();
@@ -258,8 +265,15 @@ function parseRelativeTime(text: string): number {
  * Fetch videos from a YouTube playlist
  */
 export async function fetchPlaylistVideos(playlistId: string): Promise<YouTubeVideo[]> {
-  const res = await fetch(`/youtube-playlist?list=${playlistId}`);
-  if (!res.ok) throw new Error('Failed to fetch playlist');
+  const res = await backendFetch(`/api/youtube/playlist?list=${encodeURIComponent(playlistId)}`);
+  if (!res.ok) {
+    let detail = 'Failed to fetch playlist';
+    try {
+      const errBody = await res.json();
+      if (errBody?.error) detail = errBody.error;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
   
   const data = await res.json();
   const videos: YouTubeVideo[] = [];

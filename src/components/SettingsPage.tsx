@@ -752,29 +752,77 @@ export default function SettingsPage() {
         </Section>
 
         {/* AI Brain */}
-        <Section title="AI Brain (Claude Haiku)" icon={<Brain size={15} className="text-pink-400" />} note="Adds Claude-powered decisions to each profile — search query, read depth, next action. Without key, uses persona system.">
-          <div>
-            <label className="text-gray-400 text-xs block mb-1.5">Anthropic API Key</label>
-            <input
-              type="password"
-              value={settings.anthropicApiKey || ''}
-              onChange={(e) => update('anthropicApiKey', e.target.value)}
-              placeholder="sk-ant-api03-..."
-              className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono"
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Get key: <span className="text-pink-400">console.anthropic.com → API Keys → Create key</span> · Cost: ~$0.25/million tokens · Max 25 calls/session per profile
-            </p>
+        <Section title="AI Brain (per-profile agent)" icon={<Brain size={15} className="text-pink-400" />} note="Each profile gets its own AI context (playbook + persona). Popup help uses vision only when rules fail. Without any API key, persona + rules only.">
+          <div className="space-y-4">
+            <div>
+              <label className="text-gray-400 text-xs block mb-1.5">AI Provider</label>
+              <select
+                value={settings.aiProvider || 'auto'}
+                onChange={(e) => update('aiProvider', e.target.value as AppSettings['aiProvider'])}
+                className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm"
+              >
+                <option value="auto">Auto (Claude text, NVIDIA/Claude vision)</option>
+                <option value="claude">Claude only</option>
+                <option value="nvidia">NVIDIA NIM only</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs block mb-1.5">Anthropic API Key (Claude)</label>
+              <input
+                type="password"
+                value={settings.anthropicApiKey || ''}
+                onChange={(e) => update('anthropicApiKey', e.target.value)}
+                placeholder="sk-ant-api03-..."
+                className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                <span className="text-pink-400">console.anthropic.com</span> · search, watch %, engagement, comments
+              </p>
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs block mb-1.5">NVIDIA NIM API Key (vision popups)</label>
+              <input
+                type="password"
+                value={settings.nvidiaApiKey || ''}
+                onChange={(e) => update('nvidiaApiKey', e.target.value)}
+                placeholder="nvapi-..."
+                className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                <span className="text-green-400">build.nvidia.com</span> · optional — uncertain popups only
+              </p>
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs block mb-1.5">NVIDIA model</label>
+              <input
+                type="text"
+                value={settings.nvidiaModel || ''}
+                onChange={(e) => update('nvidiaModel', e.target.value)}
+                placeholder="meta/llama-3.2-90b-vision-instruct"
+                className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.aiVisionEnabled === true || settings.aiVisionEnabled === 'true'}
+                onChange={(e) => update('aiVisionEnabled', e.target.checked)}
+                className="rounded border-gray-600"
+              />
+              Vision on uncertain UI (screenshot when rules fail)
+            </label>
           </div>
-          {settings.anthropicApiKey ? (
+          {(settings.anthropicApiKey || settings.nvidiaApiKey) ? (
             <div className="mt-3 flex items-center gap-2 bg-pink-900/20 border border-pink-700/30 rounded-xl px-3 py-2">
               <Brain size={13} className="text-pink-400" />
-              <span className="text-xs text-pink-300">AI Brain enabled — Claude Haiku will guide profile decisions</span>
+              <span className="text-xs text-pink-300">
+                AI enabled — per-profile playbook + supervisor (max 50 calls/session)
+              </span>
             </div>
           ) : (
             <div className="mt-3 flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
               <Brain size={13} className="text-gray-500" />
-              <span className="text-xs text-gray-500">No key — using persona system (Researcher, Casual, Skimmer, etc.)</span>
+              <span className="text-xs text-gray-500">No API key — persona + rules only (same as before)</span>
             </div>
           )}
         </Section>

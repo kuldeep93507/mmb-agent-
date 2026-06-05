@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { ThemeProvider } from './contexts/ThemeContext';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import Dashboard from './components/Dashboard';
@@ -16,6 +17,7 @@ import BacklinkPoolPage from './components/BacklinkPoolPage';
 import MonitorPage from './components/MonitorPage';
 import EngagementPage from './components/EngagementPage';
 import GmailSetupPage from './components/GmailSetupPage';
+import ProxySettingsPage from './components/ProxySettingsPage';
 import SplashScreen from './components/SplashScreen';
 import { useStore } from './store/useStore';
 import { isPackagedElectron } from './utils/appMode';
@@ -40,6 +42,25 @@ export default function App() {
 
   useEffect(() => {
     initAppVersion();
+  }, []);
+
+  // Keep dashboard tab awake so control panel does not sleep during long runs
+  useEffect(() => {
+    let lock: WakeLockSentinel | null = null;
+    const requestLock = async () => {
+      try {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+          lock = await navigator.wakeLock.request('screen');
+        }
+      } catch { /* unsupported or denied */ }
+    };
+    void requestLock();
+    const onVisible = () => { void requestLock(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      lock?.release().catch(() => {});
+    };
   }, []);
 
   const {
@@ -86,7 +107,7 @@ export default function App() {
       case 'dashboard':
         return <Dashboard profiles={profiles} setActiveTab={setActiveTab} />;
       case 'monitor':
-        return <MonitorPage profiles={profiles} onRefreshProfiles={() => fetchProfiles()} canStartRecycle={false} />;
+        return <MonitorPage profiles={profiles} onRefreshProfiles={() => fetchProfiles()} canStartRecycle={false} setActiveTab={setActiveTab} />;
       case 'profiles':
         return (
           <ProfilesPage
@@ -156,6 +177,8 @@ export default function App() {
         return <EngagementPage profiles={profiles} channels={channelStore.channels} getVideos={channelStore.getVideos} setActiveTab={setActiveTab} />;
       case 'gmail-setup':
         return <GmailSetupPage profiles={profiles} />;
+      case 'proxy':
+        return <ProxySettingsPage />;
       case 'logs':
         return <LogsPage profiles={profiles} onClear={clearLogs} />;
       case 'settings':
@@ -166,23 +189,24 @@ export default function App() {
   };
 
   return (
-    <>
+    <ThemeProvider>
       {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
-      <div className={`flex h-screen bg-gray-950 text-white overflow-hidden ${showSplash ? 'hidden' : ''}`}>
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        runningCount={runningCount}
-        pendingJobs={pendingJobs}
-        activeChannels={activeChannelsCount}
-      />
-      <main className="flex-1 overflow-hidden flex flex-col">
-        <TopBar profiles={profiles} logs={logs} activeTab={activeTab} newVideoCount={videoMonitor.unreadCount} />
-        <div className="flex-1 overflow-hidden flex flex-col">
-          {renderPage()}
-        </div>
-      </main>
-    </div>
-    </>
+      <div className={`flex h-screen overflow-hidden transition-colors duration-200 ${showSplash ? 'hidden' : ''}`}
+           style={{ background: 'var(--mmb-bg)', color: 'var(--mmb-text)' }}>
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          runningCount={runningCount}
+          pendingJobs={pendingJobs}
+          activeChannels={activeChannelsCount}
+        />
+        <main className="flex-1 overflow-hidden flex flex-col">
+          <TopBar profiles={profiles} logs={logs} activeTab={activeTab} newVideoCount={videoMonitor.unreadCount} />
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {renderPage()}
+          </div>
+        </main>
+      </div>
+    </ThemeProvider>
   );
 }

@@ -10,6 +10,7 @@ import LiveProgressPanel from './LiveProgressPanel';
 import { backendFetch } from '../services/backendOrigin';
 import { postActivityLog } from '../utils/logsApi';
 import { profileConfigsForSchedule } from '../utils/profileConfigsForSchedule';
+import { loadShuffleRunSettings } from '../utils/shuffleSettingsForSchedule';
 import { PERMANENT_CHANNEL_IDS } from '../data/defaultChannels';
 import { toScheduleVideo } from '../utils/shuffleVideos';
 import {
@@ -103,6 +104,32 @@ function videoLastWatchedAt(
   return t;
 }
 
+type LiveWorkerRow = { profileId: string; status: string; currentVideo?: string };
+
+const BUSY_WORKER_STATUSES = new Set([
+  'watching', 'running', 'starting', 'connecting', 'waiting', 'queued', 'cooldown',
+]);
+const BUSY_RECYCLE_STATUSES = new Set(['running', 'recreating', 'starting']);
+
+function getBusyProfileIds(
+  workers: LiveWorkerRow[],
+  recycle: RecycleStatus | null,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const w of workers) {
+    if (w.profileId && BUSY_WORKER_STATUSES.has(w.status)) ids.add(w.profileId);
+  }
+  if (recycle?.enabled) {
+    for (const slot of recycle.slots) {
+      if (!slot.enabled) continue;
+      if (BUSY_RECYCLE_STATUSES.has(slot.status) && slot.currentProfileId) {
+        ids.add(slot.currentProfileId);
+      }
+    }
+  }
+  return ids;
+}
+
 interface VideoShufflePageProps {
   profiles: Profile[];
   channels: Channel[];
@@ -165,6 +192,45 @@ const SHUFFLE_SETTINGS_KEY = 'mmb_shuffle_settings';
 type AssignmentMode = 'unique' | 'same-all';
 type ShuffleVideoQuality = '144p' | '240p' | '360p' | '480p' | '720p' | '1080p' | 'auto';
 const QUALITY_OPTIONS: ShuffleVideoQuality[] = ['auto', '144p', '240p', '360p', '480p', '720p', '1080p'];
+type PlaybackSpeed = '0.75x' | '1x' | '1.25x' | '1.5x' | '1.75x' | '2x';
+const SPEED_OPTIONS: PlaybackSpeed[] = ['0.75x', '1x', '1.25x', '1.5x', '1.75x', '2x'];
+type TrafficSource = 'direct' | 'search' | 'suggested';
+
+interface ActionToggles {
+  like: boolean;
+  subscribe: boolean;
+  bell: boolean;
+  comment: boolean;
+  scroll: boolean;
+  qualityChange: boolean;
+  captionsToggle: boolean;
+}
+
+const DEFAULT_ACTION_TOGGLES: ActionToggles = {
+  like: true,
+  subscribe: true,
+  bell: false,
+  comment: false,
+  scroll: true,
+  qualityChange: true,
+  captionsToggle: false,
+};
+
+function ToggleSwitch({ checked, onChange, id, label }: { checked: boolean; onChange: () => void; id: string; label: string }) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition ${checked ? 'bg-emerald-500' : 'bg-slate-600'}`}
+    >
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+    </button>
+  );
+}
 
 interface ShuffleSettings {
   channelConfigs: ChannelConfig[];
@@ -173,23 +239,48 @@ interface ShuffleSettings {
   watchTimeMin: number;
   watchTimeMax: number;
   videoQuality: ShuffleVideoQuality;
-  sameModeManualPicks: Record<number, string>;
+  sameModeManualPicks: Record<number, string | string[]>;
   adSkipEnabled: boolean;
   adSkipAfterSec: number;
   midRollAdWaitSec: number;
+  // Human behaviour settings
+  volumePct: number;              // 20–100, target volume level
+  seekEnabled: boolean;           // seek with j/l keys during watch
+  seekDirection: 'forward' | 'backward' | 'both';
+  descriptionExpand: boolean;     // expand video description
+  descriptionLinks: boolean;      // click links in description
+  pauseProbability: number;       // legacy — sent as 0.05 when pause off
+  uniqueTypingPersonality: boolean;
+  naturalScrollCurves: boolean;
+  playbackSpeed: PlaybackSpeed;
+  captionsEnabled: boolean;
+  trafficSource: TrafficSource;
+  actionToggles: ActionToggles;
 }
 
 const DEFAULT_SHUFFLE_SETTINGS: ShuffleSettings = {
   channelConfigs: [],
   enabledChannelIds: [],
   assignmentMode: 'unique',
-  watchTimeMin: 80,
+  watchTimeMin: 90,
   watchTimeMax: 100,
   videoQuality: 'auto',
   sameModeManualPicks: {},
   adSkipEnabled: true,
   adSkipAfterSec: 5,
   midRollAdWaitSec: 10,
+  volumePct: 75,
+  seekEnabled: true,
+  seekDirection: 'forward',
+  descriptionExpand: true,
+  descriptionLinks: false,
+  pauseProbability: 5,
+  uniqueTypingPersonality: true,
+  naturalScrollCurves: true,
+  playbackSpeed: '1x',
+  captionsEnabled: false,
+  trafficSource: 'direct',
+  actionToggles: { ...DEFAULT_ACTION_TOGGLES },
 };
 
 function loadShuffleSettings(): ShuffleSettings {
@@ -206,10 +297,11 @@ function loadShuffleSettings(): ShuffleSettings {
 function normalizeShuffleSettings(parsed: Partial<ShuffleSettings>): ShuffleSettings {
   const merged = { ...DEFAULT_SHUFFLE_SETTINGS, ...parsed };
   const picksRaw = merged.sameModeManualPicks;
-  const sameModeManualPicks: Record<number, string> = {};
+  const sameModeManualPicks: Record<number, string | string[]> = {};
   if (picksRaw && typeof picksRaw === 'object') {
     for (const [key, val] of Object.entries(picksRaw)) {
       if (typeof val === 'string') sameModeManualPicks[Number(key)] = val;
+      else if (Array.isArray(val)) sameModeManualPicks[Number(key)] = val.filter(Boolean).map(String);
     }
   }
   return {
@@ -223,6 +315,24 @@ function normalizeShuffleSettings(parsed: Partial<ShuffleSettings>): ShuffleSett
     adSkipEnabled: merged.adSkipEnabled !== false,
     adSkipAfterSec: Number.isFinite(Number(merged.adSkipAfterSec)) ? Math.max(0, Math.min(120, Number(merged.adSkipAfterSec))) : 5,
     midRollAdWaitSec: Number.isFinite(Number(merged.midRollAdWaitSec)) ? Math.max(0, Math.min(120, Number(merged.midRollAdWaitSec))) : 10,
+    volumePct: Number.isFinite(Number(merged.volumePct)) ? Math.max(20, Math.min(100, Number(merged.volumePct))) : 75,
+    seekEnabled: merged.seekEnabled !== false,
+    seekDirection: (['forward', 'backward', 'both'] as const).includes(merged.seekDirection as 'forward' | 'backward' | 'both')
+      ? (merged.seekDirection as 'forward' | 'backward' | 'both') : 'forward',
+    descriptionExpand: merged.descriptionExpand !== false,
+    descriptionLinks: merged.descriptionLinks === true,
+    pauseProbability: Number.isFinite(Number(merged.pauseProbability)) ? Math.max(0, Math.min(100, Number(merged.pauseProbability))) : 5,
+    uniqueTypingPersonality: merged.uniqueTypingPersonality !== false,
+    naturalScrollCurves: merged.naturalScrollCurves !== false,
+    playbackSpeed: SPEED_OPTIONS.includes(merged.playbackSpeed as PlaybackSpeed)
+      ? (merged.playbackSpeed as PlaybackSpeed) : '1x',
+    captionsEnabled: merged.captionsEnabled === true,
+    trafficSource: (['direct', 'search', 'suggested'] as const).includes(merged.trafficSource as TrafficSource)
+      ? (merged.trafficSource as TrafficSource) : 'direct',
+    actionToggles: {
+      ...DEFAULT_ACTION_TOGGLES,
+      ...(merged.actionToggles && typeof merged.actionToggles === 'object' ? merged.actionToggles : {}),
+    },
   };
 }
 
@@ -329,10 +439,15 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
   const [scheduleNow, setScheduleNow] = useState(Date.now());
   const [recycleStatus, setRecycleStatus] = useState<RecycleStatus | null>(null);
   const [loopProfileIds, setLoopProfileIds] = useState<string[]>([]);
-  const [activeLoopLimit, setActiveLoopLimit] = useState(3);
+  const [activeLoopLimit, setActiveLoopLimit] = useState(20);
   const [cooldownMin, setCooldownMin] = useState(10);
   const [cooldownMax, setCooldownMax] = useState(30);
   const [loopBusy, setLoopBusy] = useState(false);
+  // 24/7 Loop traffic source mix (% per source) — global default for all loop profiles
+  const [loopSrcNotif, setLoopSrcNotif] = useState(20);
+  const [loopSrcSearch, setLoopSrcSearch] = useState(30);
+  const [loopSrcHome, setLoopSrcHome] = useState(30);
+  const [liveWorkers, setLiveWorkers] = useState<LiveWorkerRow[]>([]);
   const stopPollRef = useRef<(() => void) | null>(null);
   const runSavedScheduleRef = useRef<(s: Schedule) => Promise<void>>(async () => {});
   const firedCountdownIds = useRef<Set<string>>(new Set());
@@ -355,18 +470,27 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
         assignments,
         channelConfigs,
         enabledChannelIds: settings.enabledChannelIds,
-        settings: settings as unknown as Record<string, unknown>,
+        settings: {
+          ...settings,
+          // 24/7 loop traffic source mix — backend RecycleEngine reads these
+          srcNotificationPct: loopSrcNotif,
+          srcSearchPct:       loopSrcSearch,
+          srcHomepagePct:     loopSrcHome,
+        } as unknown as Record<string, unknown>,
         recycleConfig: {
           enabled: recycleStatus?.enabled ?? false,
           profileIds: loopProfileIds,
           activeProfileLimit: activeLoopLimit,
           cooldownMinMinutes: cooldownMin,
           cooldownMaxMinutes: cooldownMax,
+          srcNotificationPct: loopSrcNotif,
+          srcSearchPct:       loopSrcSearch,
+          srcHomepagePct:     loopSrcHome,
         },
       });
     }, 800);
     return () => clearTimeout(t);
-  }, [assignments, channelConfigs, settings, loopProfileIds, activeLoopLimit, cooldownMin, cooldownMax, serverSynced, recycleStatus?.enabled]);
+  }, [assignments, channelConfigs, settings, loopProfileIds, activeLoopLimit, cooldownMin, cooldownMax, loopSrcNotif, loopSrcSearch, loopSrcHome, serverSynced, recycleStatus?.enabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -385,11 +509,14 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
           ...(remote.settings ? remote.settings as Partial<ShuffleSettings> : {}),
         }));
       }
-      const rc = remote?.recycleConfig as { profileIds?: string[]; activeProfileLimit?: number; cooldownMinMinutes?: number; cooldownMaxMinutes?: number } | undefined;
+      const rc = remote?.recycleConfig as { profileIds?: string[]; activeProfileLimit?: number; cooldownMinMinutes?: number; cooldownMaxMinutes?: number; srcNotificationPct?: number; srcSearchPct?: number; srcHomepagePct?: number } | undefined;
       if (rc?.profileIds?.length) setLoopProfileIds(rc.profileIds.filter((id) => profiles.some((p) => p.id === id)));
       if (typeof rc?.activeProfileLimit === 'number') setActiveLoopLimit(Math.max(1, rc.activeProfileLimit));
       if (typeof rc?.cooldownMinMinutes === 'number') setCooldownMin(rc.cooldownMinMinutes);
       if (typeof rc?.cooldownMaxMinutes === 'number') setCooldownMax(rc.cooldownMaxMinutes);
+      if (typeof rc?.srcNotificationPct === 'number') setLoopSrcNotif(rc.srcNotificationPct);
+      if (typeof rc?.srcSearchPct === 'number') setLoopSrcSearch(rc.srcSearchPct);
+      if (typeof rc?.srcHomepagePct === 'number') setLoopSrcHome(rc.srcHomepagePct);
       setServerSynced(true);
     })();
     return () => { cancelled = true; };
@@ -412,6 +539,39 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     const t = setInterval(poll, 4000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await backendFetch('/api/workers');
+        const data = await res.json();
+        if (Array.isArray(data?.workers)) {
+          setLiveWorkers(data.workers.map((w: LiveWorkerRow) => ({
+            profileId: w.profileId,
+            status: w.status,
+            currentVideo: w.currentVideo,
+          })));
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    const t = setInterval(poll, 4000);
+    return () => clearInterval(t);
+  }, []);
+
+  const busyProfileIds = useMemo(
+    () => getBusyProfileIds(liveWorkers, recycleStatus),
+    [liveWorkers, recycleStatus],
+  );
+
+  useEffect(() => {
+    setSelectedProfileIds(prev => prev.filter(id => !busyProfileIds.has(id)));
+  }, [busyProfileIds]);
+
+  const toggleShuffleProfile = (id: string) => {
+    if (busyProfileIds.has(id)) return;
+    setSelectedProfileIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   const toggleLoopProfile = (id: string) => {
     setLoopProfileIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -613,25 +773,42 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
   const pickSameVideosPerChannel = useCallback((notices: string[]): AssignedVideo[] => {
     const shared: AssignedVideo[] = [];
 
+    const normalizePick = (raw: string | string[] | undefined): string[] | null => {
+      if (raw == null || raw === 'random') return null;
+      if (Array.isArray(raw)) return raw.filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return [raw.trim()];
+      return null;
+    };
+
     for (const config of channelConfigs) {
       const allChannelVideos = getVideos(config.channelId);
       if (allChannelVideos.length === 0) continue;
 
-      const manualPick = sameModePicks[config.channelId] ?? sameModePicks[Number(config.channelId) as unknown as number];
-      if (manualPick && manualPick !== 'random') {
-        const fixed = allChannelVideos.find(v => v.video_id === manualPick);
-        if (fixed) {
-          shared.push({
-            channelId: config.channelId,
-            channelName: config.channelName,
-            videoId: fixed.video_id,
-            title: fixed.title,
-            url: fixed.url,
-          });
-          continue;
+      const manualIds = normalizePick(
+        sameModePicks[config.channelId] ?? sameModePicks[Number(config.channelId) as unknown as number],
+      );
+      if (manualIds && manualIds.length > 0) {
+        let added = 0;
+        for (const vid of manualIds) {
+          const fixed = allChannelVideos.find(v => v.video_id === vid);
+          if (fixed) {
+            shared.push({
+              channelId: config.channelId,
+              channelName: config.channelName,
+              videoId: fixed.video_id,
+              title: fixed.title,
+              url: fixed.url,
+            });
+            added++;
+          }
         }
-        notices.push(`"${config.channelName}": selected video missing — random pick used`);
+        if (added > 0) continue;
+        notices.push(`"${config.channelName}": manual picks missing — random pick used`);
       }
+
+      const min = Math.max(1, config.minPerProfile || 1);
+      const max = Math.max(min, config.maxPerProfile || min);
+      const count = Math.floor(Math.random() * (max - min + 1)) + min;
 
       const unwatched = allChannelVideos.filter(v =>
         !profiles.some(p => videoIsWatched(p.id, v, watchHistory, serverHist)),
@@ -640,14 +817,17 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
         notices.push(`"${config.channelName}": pool exhausted — random repeat`);
       }
       const pickFrom = unwatched.length ? unwatched : allChannelVideos;
-      const picked = pickFrom[Math.floor(Math.random() * pickFrom.length)];
-      shared.push({
-        channelId: config.channelId,
-        channelName: config.channelName,
-        videoId: picked.video_id,
-        title: picked.title,
-        url: picked.url,
-      });
+      const shuffled = [...pickFrom].sort(() => Math.random() - 0.5);
+      const picked = shuffled.slice(0, Math.min(count, shuffled.length));
+      for (const video of picked) {
+        shared.push({
+          channelId: config.channelId,
+          channelName: config.channelName,
+          videoId: video.video_id,
+          title: video.title,
+          url: video.url,
+        });
+      }
     }
 
     return shared;
@@ -655,10 +835,18 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
 
   const shuffleAll = useCallback(() => {
     const notices: string[] = [];
+    const availableProfiles = profiles.filter(p => !busyProfileIds.has(p.id));
+    if (availableProfiles.length === 0) {
+      setRunStatus({ type: 'warn', text: 'Sab profiles active hain — shuffle ke liye koi free profile nahi.' });
+      return;
+    }
+    if (availableProfiles.length < profiles.length) {
+      notices.push(`${profiles.length - availableProfiles.length} active profile(s) skipped`);
+    }
 
     if (settings.assignmentMode === 'same-all') {
       const shared = pickSameVideosPerChannel(notices);
-      const newAssignments = profiles.map(profile => ({
+      const newAssignments = availableProfiles.map(profile => ({
         profileId: profile.id,
         profileName: profile.name,
         videos: shared.map(v => ({ ...v })),
@@ -670,7 +858,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     }
 
     const usedInThisRun = new Set<string>();
-    const newAssignments = profiles.map(profile => ({
+    const newAssignments = availableProfiles.map(profile => ({
       profileId: profile.id,
       profileName: profile.name,
       videos: pickUniqueVideosForProfile(profile.id, profile.name, usedInThisRun, notices),
@@ -679,20 +867,27 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     setAssignments(newAssignments);
     setPoolExhaustedNotice(notices);
     setIsShuffled(true);
-  }, [profiles, settings.assignmentMode, pickSameVideosPerChannel, pickUniqueVideosForProfile]);
+  }, [profiles, settings.assignmentMode, pickSameVideosPerChannel, pickUniqueVideosForProfile, busyProfileIds]);
 
   const shuffleSelected = useCallback(() => {
-    if (selectedProfileIds.length === 0) return;
+    const selectableIds = selectedProfileIds.filter(id => !busyProfileIds.has(id));
+    if (selectableIds.length === 0) {
+      setRunStatus({ type: 'warn', text: 'Selected profiles active hain — shuffle nahi ho sakta.' });
+      return;
+    }
     const notices: string[] = [];
+    if (selectableIds.length < selectedProfileIds.length) {
+      notices.push(`${selectedProfileIds.length - selectableIds.length} active profile(s) skipped`);
+    }
 
     if (settings.assignmentMode === 'same-all') {
       const shared = pickSameVideosPerChannel(notices);
       const newAssignments = assignments.map(a =>
-        selectedProfileIds.includes(a.profileId)
+        selectableIds.includes(a.profileId)
           ? { ...a, videos: shared.map(v => ({ ...v })) }
           : a,
       );
-      for (const profile of profiles.filter(p => selectedProfileIds.includes(p.id) && !newAssignments.some(a => a.profileId === p.id))) {
+      for (const profile of profiles.filter(p => selectableIds.includes(p.id) && !newAssignments.some(a => a.profileId === p.id))) {
         newAssignments.push({ profileId: profile.id, profileName: profile.name, videos: shared.map(v => ({ ...v })) });
       }
       setAssignments(newAssignments);
@@ -701,11 +896,11 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
       return;
     }
 
-    const existingOthers = assignments.filter(a => !selectedProfileIds.includes(a.profileId));
+    const existingOthers = assignments.filter(a => !selectableIds.includes(a.profileId));
     const usedInThisRun = new Set(existingOthers.flatMap(a => a.videos.map(v => v.videoId)));
     const newAssignments: ProfileAssignment[] = [...existingOthers];
 
-    for (const profile of profiles.filter(p => selectedProfileIds.includes(p.id))) {
+    for (const profile of profiles.filter(p => selectableIds.includes(p.id))) {
       newAssignments.push({
         profileId: profile.id,
         profileName: profile.name,
@@ -716,9 +911,13 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     setAssignments(newAssignments);
     setPoolExhaustedNotice(notices);
     setIsShuffled(true);
-  }, [selectedProfileIds, profiles, assignments, settings.assignmentMode, pickSameVideosPerChannel, pickUniqueVideosForProfile]);
+  }, [selectedProfileIds, profiles, assignments, settings.assignmentMode, pickSameVideosPerChannel, pickUniqueVideosForProfile, busyProfileIds]);
 
   const reshuffleSingle = useCallback((profileId: string) => {
+    if (busyProfileIds.has(profileId)) {
+      setRunStatus({ type: 'warn', text: 'Ye profile abhi active hai — shuffle nahi ho sakta.' });
+      return;
+    }
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) return;
     const notices: string[] = [];
@@ -766,7 +965,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
 
     setAssignments(prev => prev.map(a => a.profileId === profileId ? { ...a, videos: profileVideos } : a));
     setIsShuffled(true);
-  }, [assignments, channelConfigs, getVideos, watchHistory, serverHist, profiles, settings.assignmentMode, pickSameVideosPerChannel]);
+  }, [assignments, channelConfigs, getVideos, watchHistory, serverHist, profiles, settings.assignmentMode, pickSameVideosPerChannel, busyProfileIds]);
 
   const updateChannelConfig = (channelId: number, patch: Partial<ChannelConfig>) => {
     setChannelConfigs(prev => {
@@ -892,39 +1091,53 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     setActiveRunProfileIds([]);
   };
 
-  const setSameModePick = (channelId: number, videoId: string) => {
+  const applySameModeAssignments = useCallback((notices: string[] = []) => {
+    const shared = pickSameVideosPerChannel(notices);
+    setAssignments(prev => prev.map(a => ({ ...a, videos: shared.map(v => ({ ...v })) })));
+    if (notices.length) setPoolExhaustedNotice(notices);
+    setIsShuffled(true);
+  }, [pickSameVideosPerChannel]);
+
+  const getSameModeVideoList = (channelId: number): string[] => {
+    const raw = sameModePicks[channelId] ?? sameModePicks[Number(channelId) as unknown as number];
+    if (raw == null || raw === 'random') return [];
+    if (Array.isArray(raw)) return raw;
+    return [raw];
+  };
+
+  const setSameModeRandom = (channelId: number) => {
     setSettings(s => ({
       ...s,
-      sameModeManualPicks: { ...(s.sameModeManualPicks ?? {}), [channelId]: videoId },
+      sameModeManualPicks: { ...(s.sameModeManualPicks ?? {}), [channelId]: 'random' },
     }));
-    if (settings.assignmentMode !== 'same-all') return;
+    if (settings.assignmentMode === 'same-all') applySameModeAssignments([]);
+  };
 
-    const config = channelConfigs.find(c => c.channelId === channelId);
-    if (!config) return;
-
-    if (videoId === 'random') {
-      const notices: string[] = [];
-      const shared = pickSameVideosPerChannel(notices);
-      setAssignments(prev => prev.map(a => ({ ...a, videos: shared.map(v => ({ ...v })) })));
-      if (notices.length) setPoolExhaustedNotice(notices);
-      setIsShuffled(true);
+  const addSameModeVideo = (channelId: number, videoId: string) => {
+    if (!videoId || videoId === 'random') {
+      setSameModeRandom(channelId);
       return;
     }
+    setSettings(s => {
+      const prev = s.sameModeManualPicks ?? {};
+      const existing = prev[channelId];
+      const list = Array.isArray(existing) ? [...existing] : (typeof existing === 'string' && existing !== 'random' ? [existing] : []);
+      if (!list.includes(videoId)) list.push(videoId);
+      return { ...s, sameModeManualPicks: { ...prev, [channelId]: list } };
+    });
+    if (settings.assignmentMode === 'same-all') applySameModeAssignments([]);
+  };
 
-    const video = getVideos(channelId).find(v => v.video_id === videoId);
-    if (!video) return;
-    const entry: AssignedVideo = {
-      channelId,
-      channelName: config.channelName,
-      videoId: video.video_id,
-      title: video.title,
-      url: video.url,
-    };
-    setAssignments(prev => prev.map(a => {
-      const others = a.videos.filter(v => v.channelId !== channelId);
-      return { ...a, videos: [...others, entry] };
-    }));
-    setIsShuffled(true);
+  const removeSameModeVideo = (channelId: number, videoId: string) => {
+    setSettings(s => {
+      const prev = s.sameModeManualPicks ?? {};
+      const existing = prev[channelId];
+      const list = (Array.isArray(existing) ? existing : (typeof existing === 'string' && existing !== 'random' ? [existing] : []))
+        .filter(id => id !== videoId);
+      const nextPick = list.length ? list : 'random';
+      return { ...s, sameModeManualPicks: { ...prev, [channelId]: nextPick } };
+    });
+    if (settings.assignmentMode === 'same-all') applySameModeAssignments([]);
   };
 
   const buildSchedulePayload = (profilesToRun: ProfileAssignment[], scheduleId: string, name: string) => {
@@ -940,6 +1153,28 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
       humanEngagementEnabled: true,
       seekForwardMax: 2,
       seekForwardSec: 10,
+      // Human behaviour settings
+      volumePct: settings.volumePct,
+      seekEnabled: settings.seekEnabled,
+      seekDirection: settings.seekDirection,
+      descriptionExpand: settings.descriptionExpand,
+      descriptionLinks: settings.descriptionLinks,
+      pauseProbability: settings.pauseProbability / 100,
+      uniqueTypingPersonality: settings.uniqueTypingPersonality,
+      naturalScrollCurves: settings.naturalScrollCurves,
+      likeEnabled: settings.actionToggles.like,
+      subscribeEnabled: settings.actionToggles.subscribe,
+      bellEnabled: settings.actionToggles.bell,
+      commentEnabled: settings.actionToggles.comment,
+      scrollActivity: settings.actionToggles.scroll,
+      qualityChange: settings.actionToggles.qualityChange,
+      qualityChangeEnabled: settings.actionToggles.qualityChange,
+      captionsToggle: settings.actionToggles.captionsToggle,
+      captionsEnabled: settings.captionsEnabled,
+      speedChange: settings.playbackSpeed !== '1x',
+      speedChangeEnabled: settings.playbackSpeed !== '1x',
+      playbackSpeed: settings.playbackSpeed,
+      trafficSource: settings.trafficSource,
     }));
 
     const sameForAll = settings.assignmentMode === 'same-all' && profilesToRun[0]
@@ -976,6 +1211,12 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
       tabDelayMax: scheduleDraft.tabDelayMax,
       commentText: pickRandomComment(),
       runMode: scheduleDraft.runMode,
+      // Gap 2: Organic mode — Orchestrator 24h weighted scheduling (from ShuffleRunSettings)
+      organicMode: loadShuffleRunSettings().organicMode,
+      // Gap 3: ownChannelNames from active channels (for sidebar/related video matching)
+      ownChannelNames: channels
+        .filter(c => c.status === 'active')
+        .map(c => c.channel_name),
     };
   };
 
@@ -1032,6 +1273,10 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
   }, [refreshShuffleHistoryFromBackend, refreshShuffleSchedules]);
 
   const runSingleProfile = async (profileId: string) => {
+    if (busyProfileIds.has(profileId)) {
+      setRunStatus({ type: 'warn', text: 'Ye profile abhi active hai — run nahi ho sakta.' });
+      return;
+    }
     const assignment = assignments.find(a => a.profileId === profileId);
     if (!assignment || !assignment.videos.length) {
       setRunStatus({ type: 'warn', text: 'No videos assigned — shuffle first.' });
@@ -1063,16 +1308,22 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
   };
 
   const handleRunAll = async () => {
-    const profilesToRun = getProfilesToRun();
+    const profilesToRun = getProfilesToRun().filter(a => !busyProfileIds.has(a.profileId));
 
     if (profilesToRun.length === 0) {
-      setRunStatus({ type: 'warn', text: 'Shuffle karo pehle — koi assignment nahi.' });
+      setRunStatus({ type: 'warn', text: busyProfileIds.size > 0
+        ? 'Selected profiles active hain — run ke liye koi free profile nahi.'
+        : 'Shuffle karo pehle — koi assignment nahi.' });
       return;
     }
 
+    const skippedBusy = getProfilesToRun().length - profilesToRun.length;
     const conc = await fetchConcurrency();
     const mlxCount = profilesToRun.filter(a => profiles.find(p => p.id === a.profileId)?.browserType === 'multilogin').length;
     const runHints: string[] = [];
+    if (skippedBusy > 0) {
+      runHints.push(`${skippedBusy} active profile(s) skipped`);
+    }
     if (conc && profilesToRun.length > conc.available) {
       runHints.push(`Concurrency: ${conc.running}/${conc.limit} running — server may trim to ${conc.available} slots`);
     }
@@ -1249,8 +1500,8 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
     return new Set(ids);
   }, [settings.enabledChannelIds, activeChannels]);
 
-  const removeVideoFromAssignment = (profileId: string, index: number) => {
-    setAssignments(prev => prev.map(a => a.profileId === profileId ? { ...a, videos: a.videos.filter((_, i) => i !== index) } : a));
+  const removeVideoFromAssignment = (profileId: string, videoId: string) => {
+    setAssignments(prev => prev.map(a => a.profileId === profileId ? { ...a, videos: a.videos.filter(v => v.videoId !== videoId) } : a));
     setIsShuffled(true);
   };
 
@@ -1262,7 +1513,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
           <div>
             <h1 className="text-2xl font-bold text-white">Video Shuffle</h1>
             <p className="text-gray-500 text-sm mt-0.5">
-              Unique ya same video mode · watch % {settings.watchTimeMin}–{settings.watchTimeMax} · quality {settings.videoQuality}
+              Unique ya same video mode · watch {settings.watchTimeMin}–{settings.watchTimeMax}% · quality {settings.videoQuality}
             </p>
             <button type="button" onClick={() => { void refreshShuffleHistoryFromBackend(); }}
               className="mt-1 text-xs text-purple-400 hover:text-purple-300 underline-offset-2 hover:underline">
@@ -1353,7 +1604,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
           profiles={profiles}
           filterProfileIds={
             recycleStatus?.enabled
-              ? recycleStatus.slots.filter(s => s.enabled).map(s => s.currentProfileId)
+              ? recycleStatus.slots.filter(s => s.enabled && s.currentProfileId).map(s => s.currentProfileId as string)
               : running && activeRunProfileIds.length > 0
                 ? activeRunProfileIds
                 : undefined
@@ -1422,9 +1673,59 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
             </div>
             <div className="flex items-end">
               <p className="text-xs text-gray-500 pb-2">
-                Sirf first {Math.min(activeLoopLimit, loopProfileIds.length || activeLoopLimit)} selected profile(s) run honge. Extra selected profiles queue/refill nahi honge.
+                Kitne profiles 24/7 loop me chalenge (max parallel cap: {concurrency?.limit ?? 20}). Loop band karke badlo, phir dubara start.
               </p>
             </div>
+          </div>
+
+          {/* ── Traffic Source Mix (24/7 loop) ─────────────────────────────── */}
+          <div className="mb-4 bg-gray-800/30 border border-gray-700/50 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-xs text-gray-300 font-semibold">🌐 Traffic Source Mix (% — must total 100)</label>
+              <span className="text-[10px] text-gray-500">
+                Direct = {Math.max(0, 100 - loopSrcNotif - loopSrcSearch - loopSrcHome)}%
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-gray-400">🔔 Notification</span>
+                  <span className="text-[10px] text-yellow-400 font-mono">{loopSrcNotif}%</span>
+                </div>
+                <input type="range" min={0} max={100} step={5} value={loopSrcNotif}
+                  disabled={!!recycleStatus?.enabled}
+                  onChange={(e) => setLoopSrcNotif(Number(e.target.value))}
+                  className="w-full accent-yellow-500 disabled:opacity-50" />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-gray-400">🔍 Search</span>
+                  <span className="text-[10px] text-blue-400 font-mono">{loopSrcSearch}%</span>
+                </div>
+                <input type="range" min={0} max={100} step={5} value={loopSrcSearch}
+                  disabled={!!recycleStatus?.enabled}
+                  onChange={(e) => setLoopSrcSearch(Number(e.target.value))}
+                  className="w-full accent-blue-500 disabled:opacity-50" />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] text-gray-400">🏠 Homepage</span>
+                  <span className="text-[10px] text-green-400 font-mono">{loopSrcHome}%</span>
+                </div>
+                <input type="range" min={0} max={100} step={5} value={loopSrcHome}
+                  disabled={!!recycleStatus?.enabled}
+                  onChange={(e) => setLoopSrcHome(Number(e.target.value))}
+                  className="w-full accent-green-500 disabled:opacity-50" />
+              </div>
+            </div>
+            {(loopSrcNotif + loopSrcSearch + loopSrcHome) > 100 && (
+              <p className="text-[10px] text-yellow-400 mt-2 flex items-center gap-1">
+                <AlertTriangle size={10} /> Total &gt; 100% — Direct will be 0%
+              </p>
+            )}
+            <p className="text-[10px] text-gray-600 mt-2">
+              Loop ke har cycle me random source pick hoga is mix ke hisaab se. Per-profile override profile settings me set karo.
+            </p>
           </div>
 
           <div className="mb-4">
@@ -1446,7 +1747,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
             <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto">
               {profiles.map(p => {
                 const on = loopProfileIds.includes(p.id);
-                const slot = recycleStatus?.slots.find(s => s.currentProfileId === p.id || s.profileName === p.name);
+                const slot = recycleStatus?.slots?.find(s => s.currentProfileId === p.id || s.profileName === p.name);
                 return (
                   <button key={p.id} type="button" disabled={!!recycleStatus?.enabled}
                     onClick={() => toggleLoopProfile(p.id)}
@@ -1535,26 +1836,38 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
               </div>
               <p className="text-xs text-gray-500 mt-2">
                 {settings.assignmentMode === 'same-all'
-                  ? `Har enabled channel se 1 video — sab profiles par same (${channelConfigs.length} channel = ${channelConfigs.length} video). Har profile ka watch % alag.`
+                  ? `Har channel se min–max videos (channel config) — sab profiles par same list. Manual pick = multiple videos add karo.`
                   : 'Har profile ko alag video — same run me overlap nahi.'}
               </p>
             </div>
             <div>
-              <label className="text-xs text-gray-400 block mb-2">Watch % range (har profile alag %)</label>
-              <div className="flex items-center gap-3">
-                <input type="number" min={1} max={100} value={settings.watchTimeMin}
-                  onChange={(e) => setSettings(s => ({ ...s, ...clampWatchRange(Number(e.target.value), s.watchTimeMax) }))}
-                  className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm" />
-                <span className="text-gray-500">to</span>
-                <input type="number" min={1} max={100} value={settings.watchTimeMax}
-                  onChange={(e) => setSettings(s => ({ ...s, ...clampWatchRange(s.watchTimeMin, Number(e.target.value)) }))}
-                  className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm" />
+              <label className="text-xs text-gray-400 block mb-2">Watch % (har profile ko min–max ke beech random %)</label>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Min</span>
+                  <input type="number" min={1} max={100} value={settings.watchTimeMin}
+                    onChange={(e) => {
+                      const v = Math.max(1, Math.min(100, Math.round(Number(e.target.value) || 90)));
+                      setSettings(s => ({ ...s, ...clampWatchRange(v, s.watchTimeMax) }));
+                    }}
+                    className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm" />
+                </div>
+                <span className="text-xs text-gray-600">—</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Max</span>
+                  <input type="number" min={1} max={100} value={settings.watchTimeMax}
+                    onChange={(e) => {
+                      const v = Math.max(1, Math.min(100, Math.round(Number(e.target.value) || 100)));
+                      setSettings(s => ({ ...s, ...clampWatchRange(s.watchTimeMin, v) }));
+                    }}
+                    className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm" />
+                </div>
                 <span className="text-xs text-gray-500">% of video length</span>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Example: 80–100% — Profile A 87%, Profile B 94% (alag timing)</p>
+              <p className="text-xs text-gray-500 mt-2">Example: 90–100 = har profile alag % (90, 91, … 100). Shuffle/24-7 run me profile card ka watch % use nahi hota.</p>
             </div>
             <div className="lg:col-span-2">
-              <label className="text-xs text-gray-400 block mb-2">Video quality (agent 3-pass autoplay OFF verify karega)</label>
+              <label className="text-xs text-gray-400 block mb-2">Video quality (changes in first 15s of playback)</label>
               <div className="flex flex-wrap gap-2">
                 {QUALITY_OPTIONS.map(q => (
                   <button key={q} type="button"
@@ -1564,6 +1877,78 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Playback speed */}
+            <div className="lg:col-span-2">
+              <label className="text-xs text-gray-400 block mb-2">Playback speed</label>
+              <div className="inline-flex flex-wrap gap-1 rounded-lg border border-slate-700 p-1 bg-slate-800/80">
+                {SPEED_OPTIONS.map(speed => (
+                  <button key={speed} type="button"
+                    aria-label={`Set playback speed to ${speed}`}
+                    onClick={() => setSettings(s => ({ ...s, playbackSpeed: speed }))}
+                    className={`px-3 py-1 rounded text-xs transition ${settings.playbackSpeed === speed ? 'bg-emerald-500 text-white shadow' : 'text-slate-300 hover:bg-slate-700'}`}>
+                    {speed}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Captions + Traffic source */}
+            <div className="flex items-center justify-between bg-gray-800/60 px-3 py-2 rounded-xl border border-gray-700/50">
+              <label htmlFor="captions-toggle" className="text-xs text-gray-300">Captions (CC)</label>
+              <ToggleSwitch
+                id="captions-toggle"
+                label="Toggle captions"
+                checked={settings.captionsEnabled}
+                onChange={() => setSettings(s => ({ ...s, captionsEnabled: !s.captionsEnabled }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 block">Traffic source</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {([
+                  { id: 'direct' as TrafficSource, label: '🔗 Direct URL', desc: 'Open video URL directly' },
+                  { id: 'search' as TrafficSource, label: '🔍 Search', desc: 'Find via YouTube search' },
+                  { id: 'suggested' as TrafficSource, label: '📺 Suggested', desc: 'Sidebar / endscreen click' },
+                ]).map(source => (
+                  <button key={source.id} type="button"
+                    aria-label={source.desc}
+                    title={source.desc}
+                    onClick={() => setSettings(s => ({ ...s, trafficSource: source.id }))}
+                    className={`p-3 rounded-lg border-2 transition text-left ${settings.trafficSource === source.id ? 'border-emerald-500 bg-emerald-500/10' : 'border-gray-700 hover:border-gray-500'}`}>
+                    <div className="font-medium text-xs text-white">{source.label}</div>
+                    <div className="text-[10px] text-gray-500 mt-1">{source.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Engagement action toggles (replace probability sliders) */}
+            <div className="lg:col-span-2 space-y-3 p-4 bg-slate-800/50 rounded-lg border border-gray-700/50">
+              <h3 className="font-semibold text-xs text-white">Engagement actions</h3>
+              {([
+                { key: 'like' as const, label: '👍 Like video' },
+                { key: 'subscribe' as const, label: '🔔 Subscribe' },
+                { key: 'bell' as const, label: '🔔 Bell notification' },
+                { key: 'comment' as const, label: '💬 Comment' },
+                { key: 'scroll' as const, label: '📜 Scroll activity' },
+                { key: 'qualityChange' as const, label: '⚙️ Change quality' },
+                { key: 'captionsToggle' as const, label: '📝 Toggle captions' },
+              ]).map(action => (
+                <div key={action.key} className="flex items-center justify-between">
+                  <label htmlFor={`${action.key}-toggle`} className="text-xs text-gray-300">{action.label}</label>
+                  <ToggleSwitch
+                    id={`${action.key}-toggle`}
+                    label={action.label}
+                    checked={settings.actionToggles[action.key]}
+                    onChange={() => setSettings(s => ({
+                      ...s,
+                      actionToggles: { ...s.actionToggles, [action.key]: !s.actionToggles[action.key] },
+                    }))}
+                  />
+                </div>
+              ))}
             </div>
             <div className="lg:col-span-2 border-t border-gray-800 pt-4">
               <label className="text-xs text-gray-400 block mb-2 font-medium text-amber-300/90">Ads Settings</label>
@@ -1589,29 +1974,153 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
               </div>
               <p className="text-xs text-gray-600 mt-2">Pre-roll = video se pehle ad · Mid-roll = beech me ad · Skip button aane ke baad itni der wait</p>
             </div>
+
+            {/* ── Human Behaviour Settings ── */}
+            <div className="lg:col-span-2 border-t border-gray-800 pt-4 space-y-4">
+              <label className="text-xs text-gray-400 block mb-1 font-medium text-purple-300/90">Human Behaviour Settings</label>
+
+              {/* Volume */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400 w-40 flex-shrink-0">🔊 Volume level</span>
+                <input type="range" min={20} max={100} step={5} value={settings.volumePct}
+                  onChange={e => setSettings(s => ({ ...s, volumePct: Number(e.target.value) }))}
+                  className="flex-1 accent-teal-500" />
+                <span className="text-teal-300 text-xs font-mono w-10 text-right">{settings.volumePct}%</span>
+              </div>
+
+              {/* Seek */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-400">⏩ Seek (j/l keys)</label>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, seekEnabled: !s.seekEnabled }))}
+                    className={`relative w-10 h-5 rounded-full transition-all ${settings.seekEnabled ? 'bg-cyan-500' : 'bg-gray-700'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${settings.seekEnabled ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                </div>
+                {settings.seekEnabled && (
+                  <div className="flex gap-2 pl-4">
+                    {(['forward', 'backward', 'both'] as const).map(d => (
+                      <button key={d}
+                        onClick={() => setSettings(s => ({ ...s, seekDirection: d }))}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] border transition-all ${settings.seekDirection === d ? 'border-cyan-500 bg-cyan-900/30 text-cyan-300' : 'border-gray-700 bg-gray-800 text-gray-500 hover:border-gray-600'}`}>
+                        {d === 'forward' ? '→ Forward' : d === 'backward' ? '← Backward' : '↔ Both'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Description expand + links */}
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="flex items-center justify-between text-xs text-gray-400 bg-gray-800/60 px-3 py-2 rounded-xl border border-gray-700/50">
+                  <span>📖 Description expand</span>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, descriptionExpand: !s.descriptionExpand }))}
+                    className={`relative w-10 h-5 rounded-full transition-all flex-shrink-0 ${settings.descriptionExpand ? 'bg-amber-500' : 'bg-gray-700'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${settings.descriptionExpand ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                </label>
+                <label className="flex items-center justify-between text-xs text-gray-400 bg-gray-800/60 px-3 py-2 rounded-xl border border-gray-700/50">
+                  <span>🔗 Description links open</span>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, descriptionLinks: !s.descriptionLinks }))}
+                    className={`relative w-10 h-5 rounded-full transition-all flex-shrink-0 ${settings.descriptionLinks ? 'bg-orange-500' : 'bg-gray-700'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${settings.descriptionLinks ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                </label>
+              </div>
+
+              {/* Typing personality + Scroll curves */}
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="flex items-center justify-between text-xs text-gray-400 bg-gray-800/60 px-3 py-2 rounded-xl border border-gray-700/50">
+                  <div>
+                    <span className="text-white/90">⌨️ Unique typing personality</span>
+                    <p className="text-[10px] text-gray-500 mt-0.5">Each profile+session = unique speed &amp; typo rate</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, uniqueTypingPersonality: !s.uniqueTypingPersonality }))}
+                    className={`relative w-10 h-5 rounded-full transition-all flex-shrink-0 ml-3 ${settings.uniqueTypingPersonality ? 'bg-purple-500' : 'bg-gray-700'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${settings.uniqueTypingPersonality ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                </label>
+                <label className="flex items-center justify-between text-xs text-gray-400 bg-gray-800/60 px-3 py-2 rounded-xl border border-gray-700/50">
+                  <div>
+                    <span className="text-white/90">🌊 Natural scroll curves</span>
+                    <p className="text-[10px] text-gray-500 mt-0.5">Smooth eased scroll — not instant jumps</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, naturalScrollCurves: !s.naturalScrollCurves }))}
+                    className={`relative w-10 h-5 rounded-full transition-all flex-shrink-0 ml-3 ${settings.naturalScrollCurves ? 'bg-blue-500' : 'bg-gray-700'}`}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${settings.naturalScrollCurves ? 'left-5' : 'left-0.5'}`} />
+                  </button>
+                </label>
+              </div>
+
+              {/* Autoplay status — always hardlocked OFF */}
+              <div className="flex items-center gap-2 px-3 py-2 bg-green-900/20 border border-green-700/30 rounded-xl text-xs text-green-400">
+                <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+                Autoplay HARD-OFF — always locked, cannot be changed (required for view authenticity)
+              </div>
+            </div>
+
             {settings.assignmentMode === 'same-all' && channelConfigs.length > 0 && (
               <div className="lg:col-span-2 border-t border-gray-800 pt-4">
-                <label className="text-xs text-gray-400 block mb-3">Same mode — video select karo (har channel ke liye)</label>
+                <label className="text-xs text-gray-400 block mb-3">Same mode — videos per channel (multiple add kar sakte ho)</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {channelConfigs.map(config => {
                     const vids = getVideos(config.channelId);
-                    const current = sameModePicks[config.channelId] || 'random';
+                    const picked = getSameModeVideoList(config.channelId);
+                    const isRandom = picked.length === 0;
                     return (
                       <div key={config.channelId} className="bg-gray-800 rounded-xl p-3 border border-gray-700">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-white text-xs font-medium">{config.channelName}</span>
-                          <span className="text-gray-500 text-xs">{vids.length} videos</span>
+                          <span className="text-gray-500 text-xs">{config.minPerProfile}–{config.maxPerProfile} random / {picked.length} fixed</span>
                         </div>
-                        <select
-                          value={current}
-                          onChange={(e) => setSameModePick(config.channelId, e.target.value)}
-                          className="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white"
-                        >
-                          <option value="random">🎲 Random shuffle</option>
-                          {vids.map(v => (
-                            <option key={v.video_id} value={v.video_id}>{v.title}</option>
-                          ))}
-                        </select>
+                        {picked.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {picked.map(vid => {
+                              const v = vids.find(x => x.video_id === vid);
+                              return (
+                                <span key={vid} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-900/40 text-blue-200 text-[10px] max-w-full">
+                                  <span className="truncate max-w-[140px]">{v?.title || vid.slice(0, 8)}</span>
+                                  <button type="button" onClick={() => removeSameModeVideo(config.channelId, vid)} className="text-blue-400 hover:text-white">×</button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <select
+                            defaultValue=""
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (!val) return;
+                              if (val === 'random') setSameModeRandom(config.channelId);
+                              else addSameModeVideo(config.channelId, val);
+                              e.target.value = '';
+                            }}
+                            className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                          >
+                            <option value="">+ Add video…</option>
+                            <option value="random">🎲 Use random (min–max)</option>
+                            {vids.filter(v => !picked.includes(v.video_id)).map(v => (
+                              <option key={v.video_id} value={v.video_id}>{v.title}</option>
+                            ))}
+                          </select>
+                          {!isRandom && (
+                            <button type="button" onClick={() => setSameModeRandom(config.channelId)}
+                              className="px-2 py-1 rounded-lg bg-gray-700 text-gray-300 text-[10px] hover:bg-gray-600">
+                              Random
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1741,23 +2250,42 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-white font-semibold">Select Profiles to Shuffle</h2>
             <div className="flex gap-2">
-              <button onClick={() => setSelectedProfileIds(profiles.map(p => p.id))}
+              <button type="button" onClick={() => setSelectedProfileIds(profiles.filter(p => !busyProfileIds.has(p.id)).map(p => p.id))}
                 className="text-xs text-purple-400 hover:text-purple-300">Select All</button>
-              <button onClick={() => setSelectedProfileIds([])}
+              <button type="button" onClick={() => setSelectedProfileIds([])}
                 className="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
             </div>
           </div>
-          <p className="text-xs text-gray-500 mb-3">Shuffle All = saare profiles. Selected = Shuffle Selected + Run filter.</p>
+          {busyProfileIds.size > 0 && (
+            <div className="mb-3 flex items-center gap-2 text-xs rounded-lg px-3 py-2 border border-green-700/30 bg-green-900/20 text-green-300">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              {busyProfileIds.size} profile(s) abhi active — in par shuffle / run band hai
+            </div>
+          )}
+          <p className="text-xs text-gray-500 mb-3">Shuffle All = saare free profiles. Selected = Shuffle Selected + Run filter. Active profiles green dikhengi.</p>
           <input value={profileSearch} onChange={(e) => { setProfileSearch(e.target.value); setProfilePage(1); }}
             placeholder="Search profiles…" className="w-full max-w-xs mb-3 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white" />
           <div className="flex flex-wrap gap-2">
             {pagedProfiles.map(p => {
               const isSelected = selectedProfileIds.includes(p.id);
+              const isActive = busyProfileIds.has(p.id);
+              const worker = liveWorkers.find(w => w.profileId === p.id);
               return (
-                <button key={p.id} onClick={() => setSelectedProfileIds(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${isSelected ? 'border-purple-500 bg-purple-900/30 text-purple-300' : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600'}`}>
-                  <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-purple-400' : 'bg-gray-600'}`} />
+                <button key={p.id} type="button" disabled={isActive}
+                  onClick={() => toggleShuffleProfile(p.id)}
+                  title={isActive ? `Active: ${worker?.currentVideo || worker?.status || 'running'}` : undefined}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                    isActive
+                      ? 'border-green-500/60 bg-green-900/30 text-green-300 cursor-not-allowed opacity-90'
+                      : isSelected
+                        ? 'border-purple-500 bg-purple-900/30 text-purple-300'
+                        : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    isActive ? 'bg-green-400 animate-pulse' : isSelected ? 'bg-purple-400' : 'bg-gray-600'
+                  }`} />
                   {p.name}
+                  {isActive && <span className="text-[10px] uppercase tracking-wide text-green-400">Active</span>}
                 </button>
               );
             })}
@@ -1830,24 +2358,33 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {assignments.map(a => {
                 const profile = profiles.find(p => p.id === a.profileId);
+                const isActive = busyProfileIds.has(a.profileId);
                 const historyCount = watchedCountsByProfile[a.profileId] ?? watchHistory.filter(h => h.profileId === a.profileId).length;
                 const totalAvailable = channelConfigs.reduce((sum, c) => sum + c.totalVideos, 0);
                 const watchPercent = totalAvailable > 0 ? Math.round((historyCount / totalAvailable) * 100) : 0;
                 return (
                   <div key={a.profileId}
-                    className="bg-gray-800 border border-gray-700 rounded-xl p-3 hover:border-purple-600/50 transition-all group">
+                    className={`bg-gray-800 border rounded-xl p-3 transition-all group ${
+                      isActive ? 'border-green-600/50 opacity-80' : 'border-gray-700 hover:border-purple-600/50'
+                    }`}>
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-xs font-bold">{(profile?.name || 'P').charAt(0)}</div>
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                        isActive ? 'bg-green-700' : 'bg-red-600'
+                      }`}>{(profile?.name || 'P').charAt(0)}</div>
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-xs font-medium truncate">{profile?.name || a.profileName}</p>
-                        <p className="text-xs text-gray-500">{a.videos.length} assigned • {historyCount}/{totalAvailable} watched</p>
+                        <p className="text-xs text-gray-500">
+                          {isActive ? 'Active — shuffle/run band' : `${a.videos.length} assigned • ${historyCount}/${totalAvailable} watched`}
+                        </p>
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); runSingleProfile(a.profileId); }}
-                        className="bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded text-xs transition-all">
+                      <button onClick={(e) => { e.stopPropagation(); void runSingleProfile(a.profileId); }}
+                        disabled={isActive}
+                        className="bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 rounded text-xs transition-all">
                         <Play size={10} className="inline" /> Run
                       </button>
                       <button type="button" onClick={() => reshuffleSingle(a.profileId)}
-                        className="bg-purple-800 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs">
+                        disabled={isActive}
+                        className="bg-purple-800 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 rounded text-xs">
                         <Shuffle size={10} className="inline" />
                       </button>
                       <button type="button" onClick={() => setDetailProfile(a.profileId)}
@@ -1892,7 +2429,7 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
           watchHistory={watchHistory.filter(h => h.profileId === detailProfile)}
           serverNormSet={new Set((serverHist[detailProfile] || []).map(r => r.norm))}
           mergedWatchedCount={watchedCountsByProfile[detailProfile] ?? watchHistory.filter(h => h.profileId === detailProfile).length}
-          onRemove={(index) => removeVideoFromAssignment(detailProfile, index)}
+          onRemove={(videoId) => removeVideoFromAssignment(detailProfile, videoId)}
           onClose={() => setDetailProfile(null)} />
         );
       })()}
@@ -1910,7 +2447,7 @@ function DetailModal({ assignment, profile, watchHistory, serverNormSet, mergedW
   watchHistory: WatchHistory[];
   serverNormSet: Set<string>;
   mergedWatchedCount: number;
-  onRemove: (index: number) => void;
+  onRemove: (videoId: string) => void;
   onClose: () => void;
 }) {
   if (!assignment) return null;
@@ -1952,7 +2489,7 @@ function DetailModal({ assignment, profile, watchHistory, serverNormSet, mergedW
                       <span className="text-gray-500 w-4">{i + 1}.</span>
                       <span className={`flex-1 truncate ${wasWatched ? 'text-green-400' : 'text-gray-300'}`}>{v.title}</span>
                       {wasWatched && <CheckCircle size={10} className="text-green-400 flex-shrink-0" />}
-                      <button type="button" onClick={() => onRemove(i)} className="text-red-400 text-xs">✕</button>
+                      <button type="button" onClick={() => onRemove(v.videoId)} className="text-red-400 text-xs">✕</button>
                     </div>
                   );
                 })}

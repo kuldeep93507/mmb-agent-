@@ -89,4 +89,5 @@ export const LOG_SOURCE_LABELS: Record<LogSource, string> = {
   settings: 'Settings',
   system: 'System',
   'yt-agent': 'YT Agent',
+  engagement: 'Engagement',
 };

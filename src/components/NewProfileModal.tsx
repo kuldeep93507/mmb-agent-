@@ -119,7 +119,7 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
     {
       id: 'smartproxy' as const,
       label: 'SmartProxy (Your Proxy)',
-      desc: 'us.smartproxy.net HTTP proxy from your .env — separate from Multilogin built-in.',
+      desc: 'us.smartproxy.net HTTP proxy from Settings — separate from Multilogin built-in.',
       icon: <Globe size={16} />,
       color: 'text-green-400',
       bg: 'border-green-500 bg-green-900/20',

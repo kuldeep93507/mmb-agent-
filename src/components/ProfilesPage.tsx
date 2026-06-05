@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Plus, CheckSquare, Square, Play, StopCircle, Search,
   RefreshCw, Trash2, RotateCcw, Download, ChevronLeft, ChevronRight, Clock, AlertTriangle, Zap,
+  LayoutGrid, List, Settings, Globe,
 } from 'lucide-react';
 import type { Profile, OS } from '../types';
 import type { ProviderSelection } from '../services/browserProviderApi';
@@ -19,6 +20,233 @@ import {
 
 type BrowserProvider = 'morelogin' | 'multilogin';
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   COMPACT VIEW COMPONENT
+───────────────────────────────────────────────────────────────────────────── */
+function statusMeta(status: string) {
+  switch (status) {
+    case 'running':    return { color: '#16a34a', bg: '#dcfce7', label: 'Running'    };
+    case 'watching':   return { color: '#16a34a', bg: '#dcfce7', label: 'Watching'   };
+    case 'starting':   return { color: '#4f46e5', bg: '#eef2ff', label: 'Starting'   };
+    case 'connecting': return { color: '#4f46e5', bg: '#eef2ff', label: 'Connecting' };
+    case 'searching':  return { color: '#4f46e5', bg: '#eef2ff', label: 'Searching'  };
+    case 'waiting':    return { color: '#d97706', bg: '#fef3c7', label: 'Queued'     };
+    case 'error':      return { color: '#dc2626', bg: '#fee2e2', label: 'Error'      };
+    case 'crashed':    return { color: '#dc2626', bg: '#fee2e2', label: 'Crashed'    };
+    case 'recreating': return { color: '#7c3aed', bg: '#f3e8ff', label: 'Recreating' };
+    default:           return { color: '#6b7280', bg: '#f3f4f6', label: status.charAt(0).toUpperCase() + status.slice(1) };
+  }
+}
+
+function proxyMeta(proxy: { host?: string; expiresAt?: number }) {
+  const now = Date.now();
+  const exp = proxy.expiresAt || 0;
+  if (!exp)                     return { color: '#6b7280', label: 'No proxy' };
+  if (exp < now)                return { color: '#dc2626', label: 'Expired'  };
+  if (exp < now + 7_200_000)    return { color: '#d97706', label: 'Expiring' };
+  return                               { color: '#16a34a', label: 'OK'       };
+}
+
+interface CompactProfileListProps {
+  profiles: import('../types').Profile[];
+  recreatingIds: Set<string>;
+  onStart: (id: string) => void;
+  onStop: (id: string) => void;
+  onSettings: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRecreate: (id: string) => void;
+  onToggleSelect: (id: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
+  allSelected: boolean;
+}
+
+function CompactProfileList({
+  profiles, recreatingIds,
+  onStart, onStop, onSettings, onDelete, onRecreate, onToggleSelect,
+  onSelectAll, onDeselectAll, allSelected,
+}: CompactProfileListProps) {
+  const isLive = (s: string) => ['running','watching','starting','connecting','searching','waiting'].includes(s);
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{
+        width: '100%', borderCollapse: 'collapse',
+        fontSize: 12, color: 'var(--mmb-text)',
+      }}>
+        <thead>
+          <tr style={{ background: 'var(--mmb-surface)', borderBottom: '2px solid var(--mmb-border)' }}>
+            <th style={{ padding: '8px 10px', textAlign: 'center', width: 36 }}>
+              <button
+                type="button"
+                onClick={allSelected ? onDeselectAll : onSelectAll}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--mmb-muted)', padding: 0 }}
+              >
+                {allSelected
+                  ? <CheckSquare size={14} style={{ color: '#4f46e5' }} />
+                  : <Square size={14} />}
+              </button>
+            </th>
+            {['Name', 'Status', 'Provider', 'OS', 'IP', 'Proxy', 'Actions'].map(h => (
+              <th key={h} style={{
+                padding: '8px 10px', textAlign: 'left',
+                fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                letterSpacing: '.06em', color: 'var(--mmb-muted)',
+                whiteSpace: 'nowrap',
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {profiles.map((p, i) => {
+            const sm    = statusMeta(p.status);
+            const pm    = proxyMeta(p.proxy);
+            const live  = isLive(p.status);
+            const isRec = recreatingIds.has(p.id) || p.status === 'recreating';
+            const rowBg = p.selected
+              ? 'rgba(79,70,229,.07)'
+              : i % 2 === 0 ? 'var(--mmb-surface)' : 'var(--mmb-bg)';
+
+            return (
+              <tr key={p.id} style={{
+                background: rowBg,
+                borderBottom: '1px solid var(--mmb-border)',
+                transition: 'background .1s',
+              }}
+              onMouseEnter={e => { if (!p.selected) (e.currentTarget as HTMLTableRowElement).style.background = 'var(--mmb-surface2)'; }}
+              onMouseLeave={e => { if (!p.selected) (e.currentTarget as HTMLTableRowElement).style.background = rowBg; }}
+              >
+                {/* Checkbox */}
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <button type="button" onClick={() => onToggleSelect(p.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--mmb-muted)' }}>
+                    {p.selected
+                      ? <CheckSquare size={14} style={{ color: '#4f46e5' }} />
+                      : <Square size={14} />}
+                  </button>
+                </td>
+
+                {/* Name */}
+                <td style={{ padding: '6px 10px', maxWidth: 180, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {live && (
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: '#16a34a', flexShrink: 0,
+                        boxShadow: '0 0 0 2px #dcfce7',
+                        animation: 'mmb-pulse-dot 1.5s ease-out infinite',
+                      }} />
+                    )}
+                    <span style={{
+                      fontWeight: 600, whiteSpace: 'nowrap',
+                      overflow: 'hidden', textOverflow: 'ellipsis',
+                      maxWidth: 160, display: 'block',
+                    }} title={p.name}>
+                      {p.name}
+                    </span>
+                  </div>
+                </td>
+
+                {/* Status */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '2px 8px', borderRadius: 99,
+                    fontSize: 11, fontWeight: 600,
+                    background: sm.bg, color: sm.color,
+                  }}>
+                    {isRec ? '↻ Recreating' : sm.label}
+                  </span>
+                </td>
+
+                {/* Provider */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99,
+                    background: p.browserType === 'multilogin' ? 'rgba(124,58,237,.15)' : 'rgba(37,99,235,.15)',
+                    color: p.browserType === 'multilogin' ? '#7c3aed' : '#2563eb',
+                  }}>
+                    {p.browserType === 'multilogin' ? '🟣 MLX' : '🔵 ML'}
+                  </span>
+                </td>
+
+                {/* OS */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', color: 'var(--mmb-muted)', fontSize: 11 }}>
+                  {p.os === 'Windows' ? '🪟' : p.os === 'macOS' ? '🍎' : p.os === 'Android' ? '🤖' : '❓'} {p.os}
+                </td>
+
+                {/* IP */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--mmb-muted)' }}>
+                    {p.ip || '—'}
+                  </span>
+                </td>
+
+                {/* Proxy */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: 11, fontWeight: 600, color: pm.color,
+                  }}>
+                    <Globe size={11} /> {pm.label}
+                  </span>
+                </td>
+
+                {/* Actions */}
+                <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {live ? (
+                      <button type="button" onClick={() => onStop(p.id)}
+                        title="Stop"
+                        style={actionBtnStyle('#dc2626', 'rgba(220,38,38,.12)')}>
+                        ⏹
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => onStart(p.id)}
+                        title="Start"
+                        style={actionBtnStyle('#16a34a', 'rgba(22,163,74,.12)')}>
+                        ▶
+                      </button>
+                    )}
+                    <button type="button" onClick={() => onRecreate(p.id)}
+                      title="Recreate"
+                      disabled={isRec}
+                      style={actionBtnStyle('#4f46e5', 'rgba(79,70,229,.12)', isRec)}>
+                      <RotateCcw size={11} />
+                    </button>
+                    <button type="button" onClick={() => onSettings(p.id)}
+                      title="Settings"
+                      style={actionBtnStyle('#6b7280', 'rgba(107,114,128,.12)')}>
+                      <Settings size={11} />
+                    </button>
+                    <button type="button" onClick={() => onDelete(p.id)}
+                      title="Delete"
+                      style={actionBtnStyle('#dc2626', 'rgba(220,38,38,.1)')}>
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function actionBtnStyle(color: string, bg: string, disabled = false): React.CSSProperties {
+  return {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 26, height: 26, borderRadius: 6,
+    background: bg, color, border: 'none',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? .45 : 1, fontSize: 11,
+    transition: 'opacity .1s',
+    flexShrink: 0,
+  };
+}
+
 const PROVIDER_LABELS: Record<ProviderSelection, string> = {
   all: 'All Providers',
   morelogin: 'MoreLogin',
@@ -27,7 +255,9 @@ const PROVIDER_LABELS: Record<ProviderSelection, string> = {
 
 type SortKey = 'name' | 'status' | 'proxyExpiry';
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE_GRID = 24;
+const PAGE_SIZE_COMPACT = 50;
+const TRASH_PAGE_SIZE = 20;
 
 interface ProfilesPageProps {
   profiles: Profile[];
@@ -76,6 +306,9 @@ export default function ProfilesPage({
   const [trashError, setTrashError] = useState<string | null>(null);
   const [trashSelected, setTrashSelected] = useState<Set<string>>(new Set());
   const [trashPage, setTrashPage] = useState(1);
+  const [displayMode, setDisplayMode] = useState<'grid' | 'compact'>(() =>
+    (localStorage.getItem('mmb_profiles_display') as 'grid' | 'compact') || 'grid'
+  );
   const [autoEmptyTrash, setAutoEmptyTrash] = useState(false);
   const [autoEmptyHours, setAutoEmptyHours] = useState('6');
   const [autoEmptySaving, setAutoEmptySaving] = useState(false);
@@ -136,7 +369,7 @@ export default function ProfilesPage({
     setTrashLoading(true);
     setTrashError(null);
     try {
-      const res = await listTrashProfiles(page, PAGE_SIZE);
+      const res = await listTrashProfiles(page, TRASH_PAGE_SIZE);
       if (res.code === 0 && res.data) {
         setTrashProfiles(res.data.profiles || []);
         setTrashTotal(res.data.total || 0);
@@ -197,6 +430,7 @@ export default function ProfilesPage({
     return list;
   }, [profiles, search, filterOS, filterStatus, filterProvider, sortBy]);
 
+  const PAGE_SIZE = displayMode === 'compact' ? PAGE_SIZE_COMPACT : PAGE_SIZE_GRID;
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -282,7 +516,7 @@ export default function ProfilesPage({
     }
   };
 
-  const trashTotalPages = Math.max(1, Math.ceil(trashTotal / PAGE_SIZE));
+  const trashTotalPages = Math.max(1, Math.ceil(trashTotal / TRASH_PAGE_SIZE));
   const safeTrashPage = Math.min(trashPage, trashTotalPages);
   const trashSelectedCount = trashSelected.size;
 
@@ -555,6 +789,34 @@ export default function ProfilesPage({
           <span className="text-gray-600 text-xs">
             {filtered.length} shown • page {safePage}/{totalPages}
           </span>
+
+          {/* View mode toggle */}
+          <div className="flex items-center gap-0.5 bg-gray-800 border border-gray-700 rounded-xl p-0.5 ml-auto">
+            <button
+              type="button"
+              title="Grid View"
+              onClick={() => { setDisplayMode('grid'); localStorage.setItem('mmb_profiles_display','grid'); setPage(1); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                displayMode === 'grid'
+                  ? 'bg-indigo-600/30 text-indigo-300'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <LayoutGrid size={13} /> Grid
+            </button>
+            <button
+              type="button"
+              title="Compact List View"
+              onClick={() => { setDisplayMode('compact'); localStorage.setItem('mmb_profiles_display','compact'); setPage(1); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                displayMode === 'compact'
+                  ? 'bg-indigo-600/30 text-indigo-300'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <List size={13} /> Compact
+            </button>
+          </div>
         </div>
         </>
         )}
@@ -664,6 +926,20 @@ export default function ProfilesPage({
               </button>
             )}
           </div>
+        ) : displayMode === 'compact' ? (
+          <CompactProfileList
+            profiles={pageItems}
+            recreatingIds={recreatingIds}
+            onStart={onStartProfile}
+            onStop={onStopProfile}
+            onSettings={id => setSettingsProfileId(id)}
+            onDelete={onDeleteProfile}
+            onRecreate={onRecreateProfile}
+            onToggleSelect={onToggleSelect}
+            onSelectAll={onSelectAll}
+            onDeselectAll={onDeselectAll}
+            allSelected={pageItems.length > 0 && pageItems.every(p => p.selected)}
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {pageItems.map(profile => (
@@ -683,7 +959,7 @@ export default function ProfilesPage({
         )}
       </div>
 
-      {viewMode === 'active' && filtered.length > PAGE_SIZE && (
+      {viewMode === 'active' && filtered.length > (displayMode === 'compact' ? PAGE_SIZE_COMPACT : PAGE_SIZE_GRID) && (
         <div className="flex-shrink-0 px-6 py-3 border-t border-gray-800 flex items-center justify-center gap-4">
           <button
             type="button"
@@ -707,7 +983,7 @@ export default function ProfilesPage({
         </div>
       )}
 
-      {viewMode === 'trash' && trashTotal > PAGE_SIZE && (
+      {viewMode === 'trash' && trashTotal > TRASH_PAGE_SIZE && (
         <div className="flex-shrink-0 px-6 py-3 border-t border-gray-800 flex items-center justify-center gap-4">
           <button
             type="button"
@@ -718,7 +994,7 @@ export default function ProfilesPage({
             <ChevronLeft size={14} /> Prev
           </button>
           <span className="text-gray-500 text-xs">
-            Page {safeTrashPage}/{trashTotalPages} • {trashTotal} in trash
+            Page {safeTrashPage}/{trashTotalPages} • {trashTotal} in trash ({TRASH_PAGE_SIZE} per page)
           </span>
           <button
             type="button"

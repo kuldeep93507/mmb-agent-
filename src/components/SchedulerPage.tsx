@@ -9,6 +9,7 @@ import LiveProgressPanel from './LiveProgressPanel';
 import { backendFetch } from '../services/backendOrigin';
 import { postActivityLog } from '../utils/logsApi';
 import { profileConfigsForSchedule } from '../utils/profileConfigsForSchedule';
+import { mergeShuffleSettingsIntoProfileConfigs } from '../utils/shuffleSettingsForSchedule';
 import { PERMANENT_CHANNEL_IDS } from '../data/defaultChannels';
 import {
   fetchSchedulesFromServer,
@@ -21,6 +22,7 @@ import {
 import { notifyScheduleComplete, notifyScheduleError } from '../services/notifications';
 import { shouldNotifyBrowser } from '../utils/notificationPrefs';
 import Step2Videos from './scheduler/Step2Videos';
+import ShuffleRunSettingsPanel from './ShuffleRunSettingsPanel';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
@@ -72,7 +74,9 @@ function saveSchedulesLocal(s: Schedule[]) {
 function enrichScheduleForServer(schedule: Schedule, profiles: Profile[]): Schedule {
   return {
     ...schedule,
-    profileConfigs: profileConfigsForSchedule(schedule.selectedProfiles, profiles),
+    profileConfigs: mergeShuffleSettingsIntoProfileConfigs(
+      profileConfigsForSchedule(schedule.selectedProfiles, profiles),
+    ),
   };
 }
 
@@ -214,7 +218,9 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
     } : s));
 
     try {
-      const profileConfigs = profileConfigsForSchedule(schedule.selectedProfiles, profiles);
+      const profileConfigs = mergeShuffleSettingsIntoProfileConfigs(
+        profileConfigsForSchedule(schedule.selectedProfiles, profiles),
+      );
 
       let commentText = '';
       try {
@@ -560,13 +566,19 @@ function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreat
         </div>
       </div>
 
-      {/* Live Progress Panel */}
-      <div className="px-6 pt-4">
-        <LiveProgressPanel />
-      </div>
+      {/* Schedule Cards + Panels — all in one scrollable area */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Run settings (watch %, quality, ad skip) — shared with Shuffle */}
+        <div className="px-6 pt-4">
+          <ShuffleRunSettingsPanel compact />
+        </div>
 
-      {/* Schedule Cards */}
-      <div className="flex-1 overflow-y-auto p-6">
+        {/* Live Progress Panel */}
+        <div className="px-6 pt-4">
+          <LiveProgressPanel showMonitorActions />
+        </div>
+
+        <div className="p-6">
         {schedules.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64">
             <Calendar size={48} className="text-gray-700 mb-4" />
@@ -598,6 +610,7 @@ function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreat
           )}
           </>
         )}
+        </div>
       </div>
     </div>
   );

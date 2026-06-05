@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Activity, Loader, CheckCircle, XCircle, Clock, Tv, Square, LayoutGrid, Play, RefreshCw } from 'lucide-react';
+import { Activity, Loader, CheckCircle, XCircle, Clock, Tv, Square, LayoutGrid, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { backendFetch } from '../services/backendOrigin';
 import type { Profile } from '../types';
 import {
@@ -59,11 +59,37 @@ interface LiveProgressPanelProps {
   canStartRecycle?: boolean;
   /** Refresh profile list when recycle recreates profiles (new IDs) */
   onRefreshProfiles?: () => void;
+  /** Increment to force immediate workers poll */
+  refreshToken?: number;
+  /** Show Refresh + Clear completed buttons (Live Monitor) */
+  showMonitorActions?: boolean;
 }
 
 const ACTIVE_WORKER_STATUSES = new Set([
   'running', 'watching', 'searching', 'waiting', 'starting', 'connecting',
 ]);
+
+function normalizeWorkerLogs(logs: unknown[]): { time: string; level: string; message: string }[] {
+  return (logs || []).map((entry) => {
+    if (entry && typeof entry === 'object' && 'message' in (entry as object)) {
+      const e = entry as { time?: string; level?: string; message?: string };
+      return {
+        time: e.time || new Date().toISOString(),
+        level: e.level || 'info',
+        message: e.message || '',
+      };
+    }
+    const s = String(entry);
+    const m = s.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.+)$/);
+    const today = new Date().toISOString().slice(0, 10);
+    const msg = m ? m[2] : s;
+    return {
+      time: m ? `${today}T${m[1]}` : new Date().toISOString(),
+      level: /error|fail|✗/i.test(msg) ? 'error' : /✓|success|done/i.test(msg) ? 'success' : 'info',
+      message: msg,
+    };
+  });
+}
 
 const RECYCLE_ACTIVE_STATUSES = new Set(['running', 'cooldown', 'recreating', 'queued', 'error']);
 
@@ -79,7 +105,7 @@ function slotToRow(slot: RecycleSlotStatus): DisplayRow {
   };
   return {
     rowKey: `slot-${slot.slotId}`,
-    profileId: slot.currentProfileId,
+    profileId: slot.currentProfileId ?? '',
     displayName: slot.profileName,
     status: statusMap[slot.status] || slot.status,
     currentVideo: slot.status === 'running' ? `${slot.videoCount} videos queued` : null,
@@ -111,6 +137,8 @@ export default function LiveProgressPanel({
   recycleLoopBusy = false,
   canStartRecycle = false,
   onRefreshProfiles,
+  refreshToken = 0,
+  showMonitorActions = false,
 }: LiveProgressPanelProps) {
   const [workers, setWorkers] = useState<WorkerStatus[]>([]);
   const [stats, setStats] = useState<WorkerStats>({ total: 0, running: 0, done: 0, error: 0, waiting: 0 });
@@ -119,6 +147,7 @@ export default function LiveProgressPanel({
   const [isActive, setIsActive] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [loopBusyLocal, setLoopBusyLocal] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const refreshedProfileIdsRef = useRef<Set<string>>(new Set());
 
   const filterSet = useMemo(
@@ -132,7 +161,7 @@ export default function LiveProgressPanel({
     return () => clearInterval(t);
   }, []);
 
-  // Poll workers every 3 seconds
+  // Poll workers every 3 seconds (+ manual refresh)
   useEffect(() => {
     const fetchWorkers = async () => {
       try {
@@ -148,7 +177,7 @@ export default function LiveProgressPanel({
     fetchWorkers();
     const interval = setInterval(fetchWorkers, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [refreshToken]);
 
   // Poll recycle status
   useEffect(() => {
@@ -191,7 +220,7 @@ export default function LiveProgressPanel({
     const enabledSlots = (recycleStatus?.slots || []).filter((s) => s.enabled);
 
     for (const slot of enabledSlots) {
-      const worker = workerById.get(slot.currentProfileId);
+      const worker = workerById.get(slot.currentProfileId ?? '');
       const workerActive = !!(worker && ACTIVE_WORKER_STATUSES.has(worker.status));
 
       if (workerActive) {
@@ -286,6 +315,29 @@ export default function LiveProgressPanel({
     }
   };
 
+  const manualRefresh = async () => {
+    try {
+      const res = await backendFetch('/api/workers');
+      if (res.ok) {
+        const data = await res.json();
+        setWorkers(data.workers || []);
+        setStats(data.stats || { total: 0, running: 0, done: 0, error: 0, waiting: 0 });
+        setIsActive(data.stats?.running > 0 || data.stats?.waiting > 0);
+      }
+      setRecycleStatus(await fetchRecycleStatus());
+    } catch {}
+  };
+
+  const clearCompleted = async () => {
+    setClearBusy(true);
+    try {
+      await backendFetch('/api/workers/clear-completed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await manualRefresh();
+    } finally {
+      setClearBusy(false);
+    }
+  };
+
   const arrangeAll = async () => {
     const ids = displayRows
       .filter(w => ACTIVE_WORKER_STATUSES.has(w.status))
@@ -368,6 +420,19 @@ export default function LiveProgressPanel({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {showMonitorActions && (
+            <>
+              <button type="button" disabled={clearBusy} onClick={() => void manualRefresh()}
+                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1">
+                <RefreshCw size={12} /> Refresh
+              </button>
+              <button type="button" disabled={clearBusy || (displayStats.done === 0 && displayStats.error === 0)}
+                onClick={() => void clearCompleted()}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1">
+                <Trash2 size={12} /> Clear done
+              </button>
+            </>
+          )}
           {showRecycleControls && recycleActive && (
             <button
               type="button"
@@ -506,7 +571,7 @@ export default function LiveProgressPanel({
               {isExpanded && (
                 <div className="px-3 pb-3 border-t border-gray-700/50 mt-1 pt-2">
                   <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                    {(w.logs || []).slice(-10).map((log, i) => (
+                    {normalizeWorkerLogs(w.logs || []).slice(-10).map((log, i) => (
                       <div key={i} className="flex items-start gap-2 text-xs">
                         <span className="text-gray-600 flex-shrink-0 w-14">{new Date(log.time).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5 ${log.level === 'error' ? 'bg-red-500' : log.level === 'success' ? 'bg-green-500' : log.level === 'warn' ? 'bg-yellow-500' : 'bg-gray-500'}`} />

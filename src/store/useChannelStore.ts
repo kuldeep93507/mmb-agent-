@@ -143,10 +143,42 @@ export function useChannelStore() {
   const [videos, setVideos] = useState<Video[]>(() => loadFromStorage('mmb_videos', []));
   const [playlists, setPlaylists] = useState<Playlist[]>(() => loadFromStorage('mmb_playlists', []));
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+  const [hydrated, setHydrated] = useState(false);
   const serverSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Channels that need a background re-sync because their videos have missing data (duration=0, views=0)
+  const autoSyncNeeded = useRef<string[]>([]);
 
   useEffect(() => {
-    void hydrateChannelsFromServer();
+    hydrateChannelsFromServer().then(() => {
+      // After server data is written to localStorage, re-read into React state
+      const ch = loadFromStorage<Channel[]>('mmb_channels', []);
+      const vi = loadFromStorage<Video[]>('mmb_videos', []);
+      const pl = loadFromStorage<Playlist[]>('mmb_playlists', []);
+      if (ch.length > 0) {
+        setChannels(ch);
+        autoIncrement.channel = ch.reduce((m, x) => Math.max(m, x.id ?? 0), autoIncrement.channel);
+      }
+      if (vi.length > 0) {
+        setVideos(vi);
+        autoIncrement.video = vi.reduce((m, x) => Math.max(m, x.id ?? 0), autoIncrement.video);
+      }
+      if (pl.length > 0) {
+        setPlaylists(pl);
+        autoIncrement.playlist = pl.reduce((m, x) => Math.max(m, x.id ?? 0), autoIncrement.playlist);
+      }
+
+      // Detect channels with missing duration/views — mark them for auto-sync
+      if (ch.length > 0 && vi.length > 0) {
+        const needSync = ch.filter(c => {
+          const chVids = vi.filter(v => v.channel_id === c.id);
+          // Needs sync if all videos have duration ≤ 0 (placeholder zeros from bad import)
+          return chVids.length > 0 && chVids.every(v => (v.duration ?? 0) <= 0);
+        }).map(c => c.channel_id);
+        autoSyncNeeded.current = needSync;
+      }
+
+      setHydrated(true);
+    }).catch(() => setHydrated(true));
   }, []);
 
   // Persist to localStorage + server on change
@@ -155,6 +187,7 @@ export function useChannelStore() {
   useEffect(() => { saveToStorage('mmb_playlists', playlists); }, [playlists]);
 
   useEffect(() => {
+    if (!hydrated) return;  // Don't sync to server until hydration is complete (avoid overwrite on mount)
     if (serverSyncTimer.current) clearTimeout(serverSyncTimer.current);
     serverSyncTimer.current = setTimeout(() => {
       void saveChannelsBundleToServer({ channels, videos, playlists });
@@ -162,9 +195,80 @@ export function useChannelStore() {
     return () => {
       if (serverSyncTimer.current) clearTimeout(serverSyncTimer.current);
     };
-  }, [channels, videos, playlists]);
+  }, [hydrated, channels, videos, playlists]);
 
   const permanentSeedInFlight = useRef(false);
+
+  // ── Auto-sync channels with missing duration/views data ──────────────────
+  // Runs once after hydration. Uses fetchChannelFromRSS directly (not syncChannel)
+  // to avoid closure issues with newly-set state.
+  useEffect(() => {
+    if (!hydrated) return;
+    const channelIds = autoSyncNeeded.current;
+    if (channelIds.length === 0) return;
+    autoSyncNeeded.current = []; // clear so it doesn't re-run
+
+    (async () => {
+      const { fetchChannelFromRSS } = await import('../services/youtubeApi');
+      for (let i = 0; i < channelIds.length; i++) {
+        const chId = channelIds[i];
+        if (i > 0) await new Promise(r => setTimeout(r, 3000));
+        try {
+          const data = await fetchChannelFromRSS(chId);
+          // Update channel name + stats
+          setChannels(prev => prev.map(ch =>
+            ch.channel_id === chId
+              ? { ...ch, channel_name: data.channelName || ch.channel_name, last_sync: Date.now(), total_videos: data.videos.length, subscriber_count: data.subscriberCount || ch.subscriber_count }
+              : ch
+          ));
+          // Update video duration + views in place; add any new videos
+          setVideos(prev => {
+            const channelDbId = channels.find(c => c.channel_id === chId)?.id ?? 0;
+            if (!channelDbId) return prev;
+            const existingIds = new Set(prev.filter(v => v.channel_id === channelDbId).map(v => v.video_id));
+            const updated = prev.map(v => {
+              if (v.channel_id !== channelDbId) return v;
+              const fresh = data.videos.find(yv => yv.videoId === v.video_id);
+              if (!fresh) return v;
+              const sec = parseDurationToSeconds(fresh.duration || '');
+              return {
+                ...v,
+                duration: sec > 0 ? sec : v.duration,
+                views: fresh.views > 0 ? fresh.views : v.views,
+                thumbnail: fresh.thumbnail || v.thumbnail,
+              };
+            });
+            // Add new videos not in store
+            const newVids = data.videos.filter(yv => !existingIds.has(yv.videoId)).map(yv => {
+              autoIncrement.video++;
+              return {
+                id: autoIncrement.video,
+                channel_id: channelDbId,
+                video_id: yv.videoId,
+                title: yv.title,
+                url: yv.url,
+                duration: parseDurationToSeconds(yv.duration || ''),
+                views: yv.views,
+                upload_date: yv.publishedAt,
+                is_enabled: 1 as 1,
+                is_new: (Date.now() - yv.publishedAt) < 7 * 24 * 60 * 60 * 1000 ? 1 as 1 : 0 as 0,
+                watch_count: 0,
+                last_watched: null,
+                status: 'available' as const,
+                created_at: Date.now(),
+                thumbnail: yv.thumbnail,
+                likes: yv.likes,
+                priority: 'normal' as const,
+              };
+            });
+            return newVids.length > 0 ? [...newVids, ...updated] : updated;
+          });
+        } catch (e) {
+          console.warn(`[AutoSync] Failed for channel ${chId}:`, e);
+        }
+      }
+    })();
+  }, [hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = nanoid(6);
@@ -259,8 +363,9 @@ export function useChannelStore() {
     }
   }, [channels, addToast]);
 
-  // Auto-add permanent channels on load if missing
+  // Auto-add permanent channels on load if missing — wait until server hydration is done
   useEffect(() => {
+    if (!hydrated) return;  // Don't run until server data is loaded
     const missing = PERMANENT_CHANNEL_IDS.filter(
       id => !channels.some(c => c.channel_id === id),
     );
@@ -275,7 +380,7 @@ export function useChannelStore() {
     })().finally(() => {
       permanentSeedInFlight.current = false;
     });
-  }, [channels, addChannel]);
+  }, [hydrated, channels, addChannel]);
 
   // ─── UPDATE CHANNEL ───
   const updateChannel = useCallback((id: number, updates: Partial<Pick<Channel, 'auto_sync' | 'status' | 'channel_name'>>) => {

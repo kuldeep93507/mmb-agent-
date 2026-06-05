@@ -9,20 +9,26 @@ export interface VideoTarget {
 }
 
 export interface EngagementJobAction {
-  like?:             boolean;
-  dislike?:          boolean;
-  subscribe?:        boolean;
-  bell?:             boolean;
-  comment?:          boolean;
-  commentText?:      string;
-  descriptionLinks?: boolean;
+  like?:              boolean;
+  dislike?:           boolean;
+  subscribe?:         boolean;
+  bell?:              boolean;
+  comment?:           boolean;
+  commentText?:       string;
+  descriptionLinks?:  boolean;
+  descriptionExpand?: boolean;
+  volumePct?:         number;   // 0–100, target volume level
+  commentLikePct?:    number;   // 0–100, % chance of liking a comment
+  seekEnabled?:       boolean;
+  seekDirection?:     'forward' | 'backward' | 'both';
+  pauseProbability?:  number;   // 0–1, probability per tick of pause/resume
 }
 
 export interface EngagementProfileEntry {
   profileId:   string;
   profileName: string;
   browserType: string;
-  source:      'notification' | 'search' | 'direct';
+  source:      'notification' | 'search' | 'direct' | 'homepage';
   delayMs:     number;
   actions:     EngagementJobAction;
   videos:      VideoTarget[];   // one entry per channel/video → one tab each
@@ -42,13 +48,15 @@ export interface EngagementJobStatus {
   profileName: string;
   profileId:   string;
   source:      string;
-  status:      'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+  status:      'pending' | 'running' | 'done' | 'failed' | 'cancelled' | 'partial';
+  videosOk?:    number;
+  videosFailed?: number;
   scheduledAt: number;
   startedAt:   number | null;
   finishedAt:  number | null;
   error:       string | null;
-  log:         { t: string; msg: string }[];
-  actions:     EngagementJobAction;
+  log:         { t: string; msg: string }[] | undefined;
+  actions:     EngagementJobAction | undefined;
   videoCount?: number;
 }
 
@@ -59,7 +67,8 @@ export interface EngagementQueueStatus {
   done:      number;
   failed:    number;
   cancelled: number;
-  jobs:      EngagementJobStatus[];
+  partial?:  number;
+  jobs:      EngagementJobStatus[] | undefined;
 }
 
 export async function startEngagement(
@@ -118,7 +127,7 @@ const AUTO_ENGAGE = {
   watchPctMax: 100,
   adSkipEnabled: true,
   videoQuality: 'auto',
-  maxConcurrent: 3,
+  maxConcurrent: 20,
   startGapMinSec: 10,
   startGapMaxSec: 25,
 } as const;
@@ -188,16 +197,19 @@ export async function triggerAutoEngagement(
     };
   });
 
-  const result = await startEngagement({
-    profiles: profileEntries,
-    watchPct: rand(AUTO_ENGAGE.watchPctMin, AUTO_ENGAGE.watchPctMax),
-    adSkipEnabled: AUTO_ENGAGE.adSkipEnabled,
-    videoQuality: AUTO_ENGAGE.videoQuality,
-    maxConcurrent: AUTO_ENGAGE.maxConcurrent,
-  });
-
-  if (result.code === 0) {
-    return { ok: true, message: result.message, jobIds: result.jobIds };
+  try {
+    const result = await startEngagement({
+      profiles: profileEntries,
+      watchPct: rand(AUTO_ENGAGE.watchPctMin, AUTO_ENGAGE.watchPctMax),
+      adSkipEnabled: AUTO_ENGAGE.adSkipEnabled,
+      videoQuality: AUTO_ENGAGE.videoQuality,
+      maxConcurrent: AUTO_ENGAGE.maxConcurrent,
+    });
+    if (result.code === 0) {
+      return { ok: true, message: result.message, jobIds: result.jobIds };
+    }
+    return { ok: false, message: result.message || 'Engagement queue failed' };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Network error — backend reachable nahi' };
   }
-  return { ok: false, message: result.message || 'Engagement queue failed' };
 }

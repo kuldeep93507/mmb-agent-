@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" class="dark" x-data="{ sidebarOpen: true, darkMode: true }" :class="darkMode ? 'dark' : 'light'">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MMB Agent V2{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } } }
+  </script>
+  <style>body{font-family:'Inter',sans-serif}[x-cloak]{display:none!important}</style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside :class="sidebarOpen ? 'w-64' : 'w-16'" class="bg-slate-950 border-r border-slate-800 transition-all flex flex-col shrink-0">
+      <div class="p-4 border-b border-slate-800 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+          <i data-lucide="bot" class="w-5 h-5 text-emerald-400"></i>
+        </div>
+        <span x-show="sidebarOpen" class="font-semibold text-emerald-400">MMB Agent V2</span>
+      </div>
+      <div x-show="sidebarOpen" class="px-3 pt-3">
+        <input id="sidebar-search" type="search" placeholder="Search pages… (Ctrl+K)"
+               class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs"
+               aria-label="Search dashboard pages">
+      </div>
+      <nav class="flex-1 p-3 space-y-1 text-sm overflow-y-auto">
+        {% for item in nav_items %}
+        <a href="{{ item.href }}"
+           class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-emerald-400 transition"
+           title="{{ item.tooltip }}" data-label="{{ item.label|lower }}">
+          <i data-lucide="{{ item.icon }}" class="w-4 h-4 shrink-0"></i>
+          <span x-show="sidebarOpen">{{ item.label }}</span>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="p-3 border-t border-slate-800 space-y-2">
+        <button @click="darkMode = !darkMode; document.documentElement.classList.toggle('dark')"
+                class="w-full text-xs text-slate-500 hover:text-emerald-400" title="Theme toggle / थीम बदलें">
+          <i data-lucide="sun-moon" class="w-4 h-4 inline"></i> <span x-show="sidebarOpen">Theme</span>
+        </button>
+        <button @click="sidebarOpen = !sidebarOpen" class="w-full text-slate-500 hover:text-emerald-400">
+          <i data-lucide="panel-left" class="w-4 h-4 mx-auto"></i>
+        </button>
+      </div>
+    </aside>
+    <div class="flex-1 flex flex-col min-w-0">
+      <header class="h-14 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between px-6 shrink-0">
+        <div class="text-sm text-slate-400">{% block breadcrumb %}Dashboard{% endblock %}</div>
+        <div class="flex items-center gap-3">
+          <button onclick="confirmStop()" class="px-3 py-1.5 text-xs bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30"
+                  title="Sab bots band karo / Emergency stop">
+            Emergency Stop
+          </button>
+        </div>
+      </header>
+      <main class="flex-1 p-6 overflow-auto">{% block content %}{% endblock %}</main>
+    </div>
+  </div>
+  <div id="toast" class="fixed top-4 right-4 z-50" role="status" aria-live="polite"></div>
+  <div id="confirm-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-sm border border-slate-700">
+      <p id="confirm-text" class="text-sm mb-4"></p>
+      <div class="flex gap-2 justify-end">
+        <button onclick="closeConfirm()" class="px-3 py-1.5 text-sm bg-slate-700 rounded-lg">Cancel</button>
+        <button id="confirm-yes" class="px-3 py-1.5 text-sm bg-red-600 rounded-lg">Confirm</button>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+  <script>lucide.createIcons();</script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,254 @@
+{% set nav_items = [
+  {"href": "/dashboard", "icon": "layout-dashboard", "label": "Dashboard", "tooltip": "Live stats / होम"},
+  {"href": "/dashboard/videos", "icon": "video", "label": "Video Targets", "tooltip": "Target videos set karo"},
+  {"href": "/dashboard/profiles", "icon": "users", "label": "Profiles", "tooltip": "Multilogin/MoreLogin profiles"},
+  {"href": "/dashboard/proxies", "icon": "globe", "label": "Proxy Pool", "tooltip": "SmartProxy IPs"},
+  {"href": "/dashboard/engagement", "icon": "zap", "label": "Engagement", "tooltip": "Like/comment % config"},
+  {"href": "/dashboard/scheduler", "icon": "calendar", "label": "Scheduler", "tooltip": "Cron jobs"},
+  {"href": "/dashboard/shuffle", "icon": "shuffle", "label": "Video Shuffle", "tooltip": "Channel rotation"},
+  {"href": "/dashboard/analytics", "icon": "bar-chart-3", "label": "Analytics", "tooltip": "Charts & export"},
+  {"href": "/dashboard/logs", "icon": "scroll-text", "label": "Logs", "tooltip": "Live JSONL logs"},
+  {"href": "/dashboard/settings", "icon": "settings", "label": "Settings", "tooltip": "API keys & webhooks"},
+] %}
+{% extends "base.html" %}
+{% block title %}MMB Agent V2 — Control Panel{% endblock %}
+{% block breadcrumb %}{{ page_title|default('Home / Dashboard') }}{% endblock %}
+
+{% block content %}
+<div x-data="mmbApp('{{ active_page|default('home') }}')" x-init="init()" x-cloak>
+
+  <!-- HOME -->
+  <section x-show="page==='home'" class="space-y-6">
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <template x-for="c in statCards" :key="c.key">
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+          <div class="text-xs text-slate-400" x-text="c.label"></div>
+          <div class="text-2xl font-bold text-emerald-400 mt-1" x-text="stats[c.key] ?? '—'"></div>
+        </div>
+      </template>
+    </div>
+    <div class="flex gap-3">
+      <button @click="api('POST','/api/bot/start',{})" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm" title="Start all bots">Start All</button>
+      <button @click="confirmAnd(()=>api('POST','/api/bot/stop'))" class="px-4 py-2 bg-slate-700 rounded-lg text-sm" title="Stop all bots">Stop All</button>
+    </div>
+    <div class="grid lg:grid-cols-2 gap-6">
+      <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+        <h2 class="text-sm font-semibold mb-3">Live Activity <span class="text-slate-500 font-normal">(2s)</span></h2>
+        <div class="space-y-1 max-h-72 overflow-y-auto text-xs font-mono" x-html="activityHtml"></div>
+      </div>
+      <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+        <h2 class="text-sm font-semibold mb-3">Profile Health</h2>
+        <div x-show="!profiles.length" class="text-slate-500 text-sm py-8 text-center">No profiles yet — add your first profile</div>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="p in profiles" :key="p.id">
+            <div class="flex items-center gap-2 p-2 rounded-lg bg-slate-900/50 text-xs">
+              <span class="w-2 h-2 rounded-full" :class="healthColor(p.health)"></span>
+              <span x-text="p.name" class="truncate"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+    <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+      <h2 class="text-sm font-semibold mb-3">Proxy Status</h2>
+      <div x-show="!proxies.length" class="text-slate-500 text-sm">No proxy data — configure SmartProxy in Settings</div>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <template x-for="px in proxies.slice(0,9)" :key="px.id||px.host">
+          <div class="p-2 bg-slate-900/50 rounded-lg"><span x-text="px.country||px.host||'—'"></span></div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIDEO TARGETS -->
+  <section x-show="page==='videos'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Video Targets</h1>
+    <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4 space-y-3">
+      <input x-model="videoUrl" type="url" placeholder="https://youtube.com/watch?v=..."
+             class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm" aria-label="Video URL">
+      <button @click="addVideo()" class="px-4 py-2 bg-emerald-600 rounded-lg text-sm" title="Fetch title, thumbnail, chapters">Add Video</button>
+      <p class="text-xs text-slate-500">Bulk CSV import + per-video like/subscribe % — coming via API</p>
+    </div>
+  </section>
+
+  <!-- PROFILES -->
+  <section x-show="page==='profiles'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Profile Manager</h1>
+    <div x-show="!profiles.length" class="text-center py-12 text-slate-500">No profiles — import from Multilogin API</div>
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <template x-for="p in profiles" :key="p.id">
+        <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+          <div class="font-medium" x-text="p.name"></div>
+          <div class="text-xs text-slate-400 mt-1" x-text="p.status"></div>
+          <button @click="api('POST',`/api/profiles/${p.id}/test`)" class="mt-3 text-xs text-emerald-400" title="Test launch profile">Test Launch</button>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- PROXIES -->
+  <section x-show="page==='proxies'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Proxy Pool</h1>
+    <button @click="loadProxies()" class="px-3 py-1.5 bg-slate-700 rounded-lg text-sm">Refresh</button>
+    <div class="text-sm text-slate-400" x-text="`${proxies.length} proxies loaded`"></div>
+  </section>
+
+  <!-- ENGAGEMENT -->
+  <section x-show="page==='engagement'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Engagement Engine</h1>
+    <div class="grid md:grid-cols-2 gap-4">
+      <label class="block text-sm">Like % <input x-model.number="eng.like" type="range" min="0" max="100" class="w-full"></label>
+      <label class="block text-sm">Subscribe % <input x-model.number="eng.subscribe" type="range" min="0" max="100" class="w-full"></label>
+      <label class="block text-sm">Comment % <input x-model.number="eng.comment" type="range" min="0" max="100" class="w-full"></label>
+      <label class="block text-sm">Min delay (ms) <input x-model.number="eng.minDelay" type="number" class="w-full bg-slate-900 rounded px-2 py-1"></label>
+    </div>
+    <button @click="saveDraft('engagement',eng); showToast('Engagement config saved')" class="px-4 py-2 bg-emerald-600 rounded-lg text-sm">Save</button>
+  </section>
+
+  <!-- SCHEDULER -->
+  <section x-show="page==='scheduler'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Scheduler</h1>
+    <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+      <input x-model="cronExpr" placeholder="0 9 * * *" class="w-full bg-slate-900 rounded-lg px-3 py-2 text-sm mb-2">
+      <button @click="api('POST','/api/jobs',{cron:cronExpr})" class="px-4 py-2 bg-emerald-600 rounded-lg text-sm">Create Job</button>
+      <p class="text-xs text-slate-500 mt-2">FullCalendar visual builder — next sprint</p>
+    </div>
+  </section>
+
+  <!-- SHUFFLE -->
+  <section x-show="page==='shuffle'" class="space-y-4 max-w-2xl">
+    <h1 class="text-lg font-semibold">Video Shuffle</h1>
+    <input x-model="channelUrl" placeholder="Channel URL" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm">
+    <button class="px-4 py-2 bg-emerald-600 rounded-lg text-sm" title="Fetch all channel videos">Scan Channel</button>
+    <div class="bg-slate-900 border border-slate-700 rounded-xl p-4 space-y-3 text-sm">
+      <p class="text-slate-400 text-xs">Playback controls (mirrors React VideoShuffle page)</p>
+      <div>
+        <span class="text-xs text-slate-500">Speed</span>
+        <div class="flex flex-wrap gap-1 mt-1">
+          <template x-for="s in ['0.75x','1x','1.25x','1.5x','1.75x','2x']" :key="s">
+            <button type="button" class="px-2 py-1 rounded border border-slate-600 text-xs" x-text="s"></button>
+          </template>
+        </div>
+      </div>
+      <label class="flex items-center justify-between"><span>Captions (CC)</span><input type="checkbox" class="accent-emerald-500"></label>
+      <div>
+        <span class="text-xs text-slate-500">Traffic source</span>
+        <div class="grid grid-cols-3 gap-2 mt-1 text-xs">
+          <button type="button" class="p-2 rounded border border-emerald-600 bg-emerald-900/20">Direct</button>
+          <button type="button" class="p-2 rounded border border-slate-600">Search</button>
+          <button type="button" class="p-2 rounded border border-slate-600">Suggested</button>
+        </div>
+      </div>
+      <p class="text-[10px] text-slate-500">Engagement toggles: Like · Subscribe · Scroll · Quality — use React app for full config + run.</p>
+    </div>
+  </section>
+
+  <!-- ANALYTICS -->
+  <section x-show="page==='analytics'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Analytics</h1>
+    <canvas id="viewsChart" height="120" aria-label="Views over time chart"></canvas>
+    <button class="px-3 py-1.5 bg-slate-700 rounded-lg text-sm" title="Export CSV">Export CSV</button>
+  </section>
+
+  <!-- LOGS -->
+  <section x-show="page==='logs'" class="space-y-4">
+    <h1 class="text-lg font-semibold">Logs Viewer</h1>
+    <div class="flex gap-2">
+      <input x-model="logFilter" placeholder="Filter profile/action…" class="flex-1 bg-slate-900 rounded-lg px-3 py-2 text-sm">
+      <button @click="loadLogs()" class="px-3 py-1.5 bg-slate-700 rounded-lg text-sm">Refresh</button>
+      <button @click="downloadLogs()" class="px-3 py-1.5 bg-emerald-600/30 text-emerald-400 rounded-lg text-sm">Download</button>
+    </div>
+    <pre class="bg-slate-950 border border-slate-700 rounded-xl p-4 text-xs max-h-96 overflow-auto font-mono" x-text="logText"></pre>
+  </section>
+
+  <!-- SETTINGS -->
+  <section x-show="page==='settings'" class="space-y-4 max-w-lg">
+    <h1 class="text-lg font-semibold">Settings</h1>
+    <label class="block text-sm">Multilogin API Token <input type="password" class="w-full bg-slate-900 rounded-lg px-3 py-2 mt-1" placeholder="••••••••"></label>
+    <label class="block text-sm">SmartProxy User <input class="w-full bg-slate-900 rounded-lg px-3 py-2 mt-1"></label>
+    <label class="block text-sm">Discord Webhook <input class="w-full bg-slate-900 rounded-lg px-3 py-2 mt-1" placeholder="https://discord.com/api/webhooks/…"></label>
+    <label class="block text-sm">Default timeout (s) <input type="number" value="12" class="w-full bg-slate-900 rounded-lg px-3 py-2 mt-1"></label>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PAGE_MAP = {home:'home',videos:'videos',profiles:'profiles',proxies:'proxies',engagement:'engagement',scheduler:'scheduler',shuffle:'shuffle',analytics:'analytics',logs:'logs',settings:'settings'};
+function mmbApp(active) {
+  return {
+    page: PAGE_MAP[active] || 'home',
+    stats: {}, profiles: [], proxies: [], activityHtml: '', logText: '', logFilter: '',
+    videoUrl: '', channelUrl: '', cronExpr: '0 9 * * *',
+    eng: loadDraft('engagement') || {like:70, subscribe:30, comment:15, minDelay:2500},
+    statCards: [
+      {key:'active_bots',label:'Active Bots'},{key:'today_views',label:"Today's Views"},
+      {key:'today_likes',label:'Likes'},{key:'today_subscribes',label:'Subscribes'},
+      {key:'today_comments',label:'Comments'},{key:'total_profiles',label:'Profiles'},
+    ],
+    async init() {
+      await this.refresh();
+      setInterval(() => this.refresh(), 5000);
+      setInterval(() => this.loadLogs(), 2000);
+      if (this.page === 'analytics') this.initChart();
+      lucide.createIcons();
+    },
+    healthColor(h) { return h==='green'?'bg-emerald-400':h==='yellow'?'bg-yellow-400':'bg-red-400'; },
+    async refresh() {
+      try {
+        const [s,p,x] = await Promise.all([
+          fetch('/api/stats/live').then(r=>r.json()),
+          fetch('/api/profiles').then(r=>r.json()),
+          fetch('/api/proxies').then(r=>r.json()),
+        ]);
+        this.stats=s; this.profiles=p.profiles||[]; this.proxies=x.proxies||[];
+        await this.loadActivity();
+      } catch(e) { console.error(e); }
+    },
+    async loadActivity() {
+      const d = await fetch('/api/logs/tail?n=30').then(r=>r.json());
+      this.activityHtml = (d.lines||[]).reverse().map(l=>{
+        const ok = l.success ? 'text-emerald-400' : 'text-red-400';
+        const ts = (l.ts||'').slice(11,19);
+        return `<div class="${ok}">[${ts}] ${l.action} #${(l.selector_index||0)+1} ${l.elapsed_ms||''}ms</div>`;
+      }).join('') || '<div class="text-slate-500">No actions yet</div>';
+    },
+    async loadLogs() {
+      const q = this.logFilter ? `&filter=${encodeURIComponent(this.logFilter)}` : '';
+      const d = await fetch(`/api/logs/tail?n=100${q}`).then(r=>r.json());
+      this.logText = (d.lines||[]).map(l=>JSON.stringify(l)).join('\n') || 'No logs';
+    },
+    async loadProxies() { await this.refresh(); showToast('Proxies refreshed'); },
+    async api(method, url, body) {
+      const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined});
+      const j = await r.json();
+      showToast(j.message || 'Done', j.code===0?'success':'error');
+      return j;
+    },
+    addVideo() { showToast('Video fetch queued: '+this.videoUrl); saveDraft('video', {url:this.videoUrl}); },
+    downloadLogs() {
+      const blob = new Blob([this.logText], {type:'application/json'});
+      const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='mmb-logs.jsonl'; a.click();
+    },
+    initChart() {
+      const ctx = document.getElementById('viewsChart');
+      if (!ctx || ctx._chart) return;
+      ctx._chart = new Chart(ctx, {type:'line', data:{labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],
+        datasets:[{label:'Views',data:[12,19,8,22,30,25,40],borderColor:'#34d399',tension:0.3}]},
+        options:{plugins:{legend:{labels:{color:'#94a3b8'}}},scales:{x:{ticks:{color:'#64748b'}},y:{ticks:{color:'#64748b'}}}}});
+    },
+    confirmAnd(fn) { if(confirm('Are you sure? / क्या आप sure हैं?')) fn(); },
+  };
+}
+function confirmStop() {
+  if(confirm('Emergency stop ALL bots? / सभी bots बंद करें?'))
+    fetch('/api/bot/stop',{method:'POST'}).then(()=>showToast('Emergency stop sent','error'));
+}
+document.getElementById('sidebar-search')?.addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll('.nav-link').forEach(a => {
+    a.style.display = !q || (a.dataset.label||'').includes(q) ? '' : 'none';
+  });
+});
+</script>
+{% endblock %}

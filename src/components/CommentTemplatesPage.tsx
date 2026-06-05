@@ -53,7 +53,7 @@ export default function CommentTemplatesPage() {
   const addBulk = () => {
     if (!bulkText.trim()) return;
     const lines = bulkText.split('\n').map(l => l.trim()).filter(Boolean);
-    const newTemplates = lines.map(text => ({ id: Date.now().toString() + Math.random(), text, category: newCategory, usedCount: 0 }));
+    const newTemplates = lines.map(text => ({ id: crypto.randomUUID(), text, category: newCategory, usedCount: 0 }));
     setTemplates(prev => [...prev, ...newTemplates]);
     setBulkText('');
     setBulkMode(false);

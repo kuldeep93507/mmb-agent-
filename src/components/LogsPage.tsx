@@ -29,10 +29,11 @@ const SOURCE_COLORS: Record<LogSource, string> = {
   settings: 'text-gray-400',
   system: 'text-gray-500',
   'yt-agent': 'text-red-400',
+  engagement: 'text-yellow-400',
 };
 
 const SOURCES: (LogSource | 'all')[] = [
-  'all', 'worker', 'scheduler', 'shuffle', 'backlink', 'profile', 'manual', 'settings', 'system',
+  'all', 'worker', 'scheduler', 'shuffle', 'engagement', 'backlink', 'profile', 'manual', 'settings', 'system', 'yt-agent',
 ];
 
 /** Worker info spam — hidden in "Important" view */

@@ -1,345 +1,511 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Users, Play, Globe, BarChart3, Activity, TrendingUp, Calendar, Shuffle, Link2,
-  Settings, RefreshCw, AlertTriangle, Eye, Clock, Zap,
+  Users, Play, Globe, BarChart3, Eye, Clock,
+  StopCircle, RefreshCw, AlertTriangle, ChevronRight,
+  Tv, Calendar, Shuffle, Link2, Settings, WifiOff, Wifi,
+  ThumbsUp, Bell, MessageSquare,
 } from 'lucide-react';
 import type { Profile } from '../types';
-import RateLimitDashboard from './RateLimitDashboard';
 import { backendFetch } from '../services/backendOrigin';
 import {
-  fetchBackendHealth,
-  fetchConcurrency,
-  fetchAnalytics,
-  formatWatchTime,
-  type BackendHealth,
+  fetchBackendHealth, fetchConcurrency, fetchAnalytics, fetchEngagementStatus,
+  formatWatchTime, type BackendHealth,
 } from '../utils/dashboardApi';
 import { stopScheduleRun } from '../utils/shuffleApi';
 
+/* ─── Types ────────────────────────────────────────────────────────────────── */
 interface WorkerRow {
-  profileId: string;
-  status: string;
-  currentVideo: string | null;
-  progress: string;
+  profileId: string; profileName?: string; status: string;
+  currentVideo: string | null; progress: string;
+  startedAt?: number; uptime?: number;
+}
+interface DashboardProps { profiles: Profile[]; setActiveTab: (tab: string) => void; }
+
+/* ─── Helpers ──────────────────────────────────────────────────────────────── */
+const LIVE_SET = new Set(['running','watching','searching','connecting','starting','waiting']);
+const isLive = (s: string) => LIVE_SET.has(s);
+
+function workerMeta(s: string) {
+  if (['watching','running'].includes(s))                return { color:'#16a34a', bg:'#dcfce7', label:'Watching'  };
+  if (['starting','connecting','searching'].includes(s)) return { color:'#4f46e5', bg:'#eef2ff', label: s.charAt(0).toUpperCase()+s.slice(1) };
+  if (s === 'waiting')                                   return { color:'#d97706', bg:'#fef3c7', label:'Queued'    };
+  if (['error','crashed'].includes(s))                   return { color:'#dc2626', bg:'#fee2e2', label:'Error'     };
+  return                                                        { color:'#6b7280', bg:'var(--mmb-surface2)', label: s.charAt(0).toUpperCase()+s.slice(1) };
 }
 
-interface DashboardProps {
-  profiles: Profile[];
-  setActiveTab: (tab: string) => void;
+function fmtUp(ms?: number) {
+  if (!ms||ms<1000) return '';
+  const s=Math.floor(ms/1000); if(s<60) return `${s}s`;
+  const m=Math.floor(s/60); return m<60?`${m}m`:`${Math.floor(m/60)}h${m%60}m`;
 }
 
-const LIVE_PROFILE_STATUSES = new Set(['running', 'starting']);
-const LIVE_WORKER_STATUSES = new Set([
-  'running', 'watching', 'searching', 'waiting', 'starting', 'connecting',
-]);
+const TRAFFIC_CFG = [
+  { key:'trafficYouTube',  label:'YouTube Search', color:'#ef4444' },
+  { key:'trafficGoogle',   label:'Google',         color:'#3b82f6' },
+  { key:'trafficBing',     label:'Bing',           color:'#8b5cf6' },
+  { key:'trafficDirect',   label:'Direct URL',     color:'#f59e0b' },
+  { key:'trafficChannel',  label:'Channel Page',   color:'#22c55e' },
+  { key:'trafficBacklink', label:'Backlink',       color:'#ec4899' },
+] as const;
 
-function isWorkerLive(status: string): boolean {
-  return LIVE_WORKER_STATUSES.has(status);
+/* ─── Sub-components ───────────────────────────────────────────────────────── */
+function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={{
+      background: 'var(--mmb-surface)',
+      border: '1px solid var(--mmb-border)',
+      borderRadius: 12,
+      boxShadow: 'var(--mmb-shadow)',
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
 }
 
+function CardHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px 0', marginBottom: 12 }}>
+      <span style={{ fontSize:13, fontWeight:700, color:'var(--mmb-text)' }}>{title}</span>
+      {action}
+    </div>
+  );
+}
+
+function Btn({ onClick, children, danger, disabled, small }: { onClick?:()=>void; children:React.ReactNode; danger?:boolean; disabled?:boolean; small?:boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      display:'flex', alignItems:'center', gap:5,
+      padding: small ? '5px 10px' : '7px 14px',
+      borderRadius: 8, border: danger ? '1px solid var(--mmb-red)' : '1px solid var(--mmb-border)',
+      background: danger ? 'var(--mmb-red-bg)' : 'var(--mmb-surface)',
+      color: danger ? 'var(--mmb-red)' : 'var(--mmb-text2)',
+      fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? .6 : 1, transition: 'all .15s', flexShrink: 0,
+    }}>
+      {children}
+    </button>
+  );
+}
+
+function PrimaryBtn({ onClick, children, disabled }: { onClick?:()=>void; children:React.ReactNode; disabled?:boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      display:'flex', alignItems:'center', gap:5,
+      padding:'7px 16px', borderRadius:8, border:'none',
+      background:'var(--mmb-accent)', color:'#fff',
+      fontSize:12, fontWeight:600, cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? .6 : 1, transition:'all .15s', flexShrink:0,
+    }}>
+      {children}
+    </button>
+  );
+}
+
+function StatusDot({ color, pulse }: { color:string; pulse?:boolean }) {
+  return (
+    <span style={{
+      display:'inline-block', width:7, height:7, borderRadius:'50%', background:color,
+      boxShadow: pulse ? `0 0 0 0 ${color}` : 'none',
+      animation: pulse ? 'mmb-pulse-dot 1.5s ease-out infinite' : 'none',
+    }}/>
+  );
+}
+
+/* ─── KPI Card ─────────────────────────────────────────────────────────────── */
+function KpiCard({ label, val, sub, icon: Icon, accentColor, live }:{
+  label:string; val:string; sub:string; icon:React.ElementType; accentColor:string; live?:boolean;
+}) {
+  return (
+    <Card style={{ overflow:'hidden' }}>
+      <div style={{ height:3, background:accentColor, borderRadius:'12px 12px 0 0' }}/>
+      <div style={{ padding:'12px 14px' }}>
+        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:8 }}>
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--mmb-muted)', textTransform:'uppercase', letterSpacing:'.05em' }}>
+            {label}
+          </div>
+          <div style={{
+            width:26, height:26, borderRadius:7,
+            background:`${accentColor}18`,
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <Icon size={13} style={{ color: accentColor }} />
+          </div>
+        </div>
+        <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+          <div style={{ fontSize:22, fontWeight:800, color:'var(--mmb-text)', lineHeight:1 }}>{val}</div>
+          {live && (
+            <span style={{ display:'flex', alignItems:'center', gap:4, fontSize:10, color:'var(--mmb-green)', fontWeight:600 }}>
+              <StatusDot color="var(--mmb-green)" pulse/> live
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize:11, color:'var(--mmb-muted)', marginTop:4 }}>{sub}</div>
+      </div>
+    </Card>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   DASHBOARD
+═══════════════════════════════════════════════════════════════════════════════ */
 export default function Dashboard({ profiles, setActiveTab }: DashboardProps) {
-  const [workers, setWorkers] = useState<WorkerRow[]>([]);
-  const [workerStats, setWorkerStats] = useState({ total: 0, running: 0, done: 0, error: 0, waiting: 0 });
-  const [health, setHealth] = useState<BackendHealth | null>(null);
-  const [concurrency, setConcurrency] = useState<{ limit: number; running: number; available: number } | null>(null);
-  const [todayAnalytics, setTodayAnalytics] = useState<Awaited<ReturnType<typeof fetchAnalytics>>>(null);
-  const [fetchError, setFetchError] = useState('');
-  const [stopping, setStopping] = useState(false);
+  const [workers, setWorkers]    = useState<WorkerRow[]>([]);
+  const [wStats,  setWStats]     = useState({total:0,running:0,done:0,error:0,waiting:0});
+  const [health,  setHealth]     = useState<BackendHealth|null>(null);
+  const [conc,    setConc]       = useState<{limit:number;running:number;available:number}|null>(null);
+  const [engStatus,setEngStatus] = useState<Awaited<ReturnType<typeof import('../utils/dashboardApi').fetchEngagementStatus>>>(null);
+  const [data,    setData]       = useState<Awaited<ReturnType<typeof fetchAnalytics>>>(null);
+  const [offline, setOffline]    = useState(false);
+  const [stopping,setStopping]   = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [workersRes, healthData, conc, analytics] = await Promise.all([
-        backendFetch('/api/workers'),
-        fetchBackendHealth(),
-        fetchConcurrency(),
-        fetchAnalytics('today'),
+      const [wR,h,c,a,e] = await Promise.all([
+        backendFetch('/api/workers'), fetchBackendHealth(),
+        fetchConcurrency(), fetchAnalytics('today'),
+        fetchEngagementStatus(),
       ]);
-
-      if (!workersRes.ok) throw new Error(`Workers API ${workersRes.status}`);
-      const wData = await workersRes.json();
-      setWorkers(wData.workers || []);
-      setWorkerStats(wData.stats || { total: 0, running: 0, done: 0, error: 0, waiting: 0 });
-      setHealth(healthData);
-      setConcurrency(conc);
-      setTodayAnalytics(analytics);
-      setFetchError('');
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : String(err));
-    }
+      if (!wR.ok) throw new Error();
+      const wd = await wR.json();
+      setWorkers(wd.workers||[]); setWStats(wd.stats||{total:0,running:0,done:0,error:0,waiting:0});
+      setHealth(h);
+      setConc(h?.concurrency ?? c);
+      setData(a);
+      setEngStatus(e);
+      setOffline(false);
+    } catch { setOffline(true); }
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
-  }, [refresh]);
+  useEffect(() => { refresh(); const id=setInterval(refresh,5000); return ()=>clearInterval(id); }, [refresh]);
 
-  const liveWorkerCount = workers.filter((w) => isWorkerLive(w.status)).length;
-  const manualRunning = profiles.filter((p) => LIVE_PROFILE_STATUSES.has(p.status)).length;
-  const now = Date.now();
-  const proxyExpired = profiles.filter((p) => p.proxy.expiresAt > 0 && p.proxy.expiresAt < now).length;
-  const proxyExpiringSoon = profiles.filter(
-    (p) => p.proxy.expiresAt > now && p.proxy.expiresAt < now + 2 * 60 * 60 * 1000,
-  ).length;
-  const uniqueStates = new Set(profiles.map((p) => p.proxy.state).filter(Boolean)).size;
+  /* Derived */
+  const liveW    = workers.filter(w => isLive(w.status));
+  const now      = Date.now();
+  const pExpired = profiles.filter(p=>p.proxy.expiresAt>0&&p.proxy.expiresAt<now).length;
+  const pWarn    = profiles.filter(p=>p.proxy.expiresAt>now&&p.proxy.expiresAt<now+7200000).length;
+  const totalLive= Math.max(liveW.length, profiles.filter(p=>['running','starting'].includes(p.status)).length);
 
-  const activeRows = useMemo(() => {
-    const byId = new Map<string, { id: string; name: string; os: string; status: string; detail: string; source: 'worker' | 'profile' }>();
+  const totalTraffic = TRAFFIC_CFG.reduce((s,{key})=>s+(data?.[key]??0),0);
+  const trafficRows  = useMemo(()=>
+    TRAFFIC_CFG.map(({key,label,color})=>({label,color,value:data?.[key]??0}))
+               .filter(r=>r.value>0).sort((a,b)=>b.value-a.value)
+  ,[data]);
 
-    for (const w of workers) {
-      if (!isWorkerLive(w.status) && w.status !== 'done') continue;
-      const p = profiles.find((x) => x.id === w.profileId);
-      byId.set(w.profileId, {
-        id: w.profileId,
-        name: p?.name || `Profile-${w.profileId.slice(-4)}`,
-        os: p?.os || '—',
-        status: w.status,
-        detail: w.currentVideo ? `🎬 ${w.currentVideo}` : w.progress ? `Progress ${w.progress}` : '',
-        source: 'worker',
-      });
-    }
+  const recent = useMemo(()=>(data?.recentActivity||[]).slice(-8).reverse(),[data]);
 
-    for (const p of profiles) {
-      if (!LIVE_PROFILE_STATUSES.has(p.status)) continue;
-      if (byId.has(p.id)) continue;
-      byId.set(p.id, {
-        id: p.id,
-        name: p.name,
-        os: p.os,
-        status: p.status,
-        detail: p.currentAction || '',
-        source: 'profile',
-      });
-    }
-
-    return [...byId.values()].slice(0, 10);
-  }, [workers, profiles]);
-
-  const recentActivity = (todayAnalytics?.recentActivity || []).slice(-8).reverse();
-
-  const handleStopAll = async () => {
-    setStopping(true);
-    await stopScheduleRun('');
-    await refresh();
-    setStopping(false);
+  const stopAll = async () => {
+    if (!window.confirm('Stop all running workers?')) return;
+    setStopping(true); await stopScheduleRun(''); await refresh(); setStopping(false);
   };
 
-  const stats = [
-    {
-      label: 'Total Profiles',
-      value: profiles.length,
-      icon: Users,
-      color: 'blue',
-      sub: `${uniqueStates} US states`,
-      subColor: 'text-blue-300',
-    },
-    {
-      label: 'Live Activity',
-      value: Math.max(liveWorkerCount, manualRunning),
-      icon: Play,
-      color: 'green',
-      sub: liveWorkerCount > 0 ? `${liveWorkerCount} workers` : manualRunning ? `${manualRunning} manual` : 'Idle',
-      subColor: 'text-green-400',
-    },
-    {
-      label: "Today's Views",
-      value: todayAnalytics?.totalViews ?? '—',
-      icon: Eye,
-      color: 'emerald',
-      sub: `${todayAnalytics?.totalSessions ?? 0} sessions`,
-      subColor: 'text-gray-400',
-    },
-    {
-      label: 'Watch Time Today',
-      value: todayAnalytics ? formatWatchTime(todayAnalytics.totalWatchTime) : '—',
-      icon: Clock,
-      color: 'purple',
-      sub: `❤${todayAnalytics?.totalLikes ?? 0} 🔔${todayAnalytics?.totalSubscribes ?? 0}`,
-      subColor: 'text-gray-400',
-    },
-    {
-      label: 'Worker Slots',
-      value: concurrency ? `${concurrency.running}/${concurrency.limit}` : '—',
-      icon: Zap,
-      color: 'yellow',
-      sub: concurrency ? `${concurrency.available} free` : 'Settings → limits',
-      subColor: 'text-yellow-400',
-    },
-    {
-      label: 'Proxy Alerts',
-      value: proxyExpired + proxyExpiringSoon,
-      icon: Globe,
-      color: proxyExpired > 0 ? 'red' : 'yellow',
-      sub: proxyExpired > 0 ? `${proxyExpired} expired` : proxyExpiringSoon ? `${proxyExpiringSoon} expiring` : 'All OK',
-      subColor: proxyExpired > 0 ? 'text-red-400' : 'text-gray-400',
-    },
+  const avgSessionMin = data?.totalSessions
+    ? Math.round((data.totalWatchTime || 0) / data.totalSessions / 60)
+    : 0;
+  const engRunning = (engStatus?.running ?? 0) + (engStatus?.pending ?? 0);
+
+  /* KPIs */
+  const kpis = [
+    { label:'Live Workers', val: totalLive.toString(),
+      sub: totalLive>0?`${liveW.length} watching now`:`${profiles.length} profiles ready`,
+      icon:Play, accentColor:'#16a34a', live:totalLive>0 },
+    { label:"Today's Views", val:(data?.totalViews??0).toLocaleString(),
+      sub:`${data?.totalSessions??0} sessions · ${engRunning} engagement jobs`,
+      icon:Eye, accentColor:'#2563eb', live: engRunning>0 },
+    { label:'Watch Time', val: data?formatWatchTime(Math.round(data.totalWatchTime||0)):'—',
+      sub:`avg ${avgSessionMin}m per session`,
+      icon:Clock, accentColor:'#7c3aed' },
+    { label:'Proxy Health',
+      val: pExpired>0?`${pExpired} Error`:pWarn>0?`${pWarn} Warn`:'OK',
+      sub: pExpired>0?`${pExpired} expired!`:pWarn>0?`${pWarn} expiring soon`:`${profiles.length} profiles tracked`,
+      icon:Globe,
+      accentColor: pExpired>0?'#dc2626':pWarn>0?'#d97706':'#16a34a' },
   ];
 
-  const colorMap: Record<string, string> = {
-    blue: 'from-blue-500/20 to-blue-600/10 border-blue-500/30 text-blue-400',
-    green: 'from-green-500/20 to-green-600/10 border-green-500/30 text-green-400',
-    purple: 'from-purple-500/20 to-purple-600/10 border-purple-500/30 text-purple-400',
-    yellow: 'from-yellow-500/20 to-yellow-600/10 border-yellow-500/30 text-yellow-400',
-    emerald: 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/30 text-emerald-400',
-    red: 'from-red-500/20 to-red-600/10 border-red-500/30 text-red-400',
-  };
-
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">Workers, analytics & profiles — server-backed overview</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm ${fetchError ? 'border-red-700/40 bg-red-900/20 text-red-400' : 'border-gray-700 bg-gray-800 text-gray-300'}`}>
-            <div className={`w-2 h-2 rounded-full ${fetchError ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`} />
-            {fetchError || 'Live sync'}
+    <div style={{ flex:1, overflowY:'auto', background:'var(--mmb-bg)', padding:'16px 20px' }}>
+      <div style={{ maxWidth:1400, margin:'0 auto', display:'flex', flexDirection:'column', gap:14 }}>
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <h1 style={{ fontSize:18, fontWeight:800, color:'var(--mmb-text)', margin:0 }}>Dashboard</h1>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <span style={{ fontSize:11, color:'var(--mmb-muted)' }}>
+                {new Date().toLocaleDateString('en-IN', { weekday:'short', month:'short', day:'numeric' })}
+              </span>
+              <span style={{
+                display:'flex', alignItems:'center', gap:4,
+                fontSize:10, fontWeight:600, padding:'2px 8px', borderRadius:99,
+                background: offline ? 'var(--mmb-red-bg)' : 'var(--mmb-green-bg)',
+                color: offline ? 'var(--mmb-red)' : 'var(--mmb-green)',
+              }}>
+                {offline ? <WifiOff size={9}/> : <Wifi size={9}/>}
+                {offline ? 'Offline' : 'Live · 5s'}
+              </span>
+            </div>
           </div>
-          <button type="button" onClick={refresh} className="p-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-400 hover:text-white" title="Refresh">
-            <RefreshCw size={16} />
-          </button>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <Btn onClick={refresh}><RefreshCw size={12}/>Refresh</Btn>
+            {(liveW.length>0||wStats.waiting>0) && (
+              <Btn onClick={stopAll} disabled={stopping} danger>
+                <StopCircle size={12}/>{stopping?'Stopping…':'Stop All'}
+              </Btn>
+            )}
+            <PrimaryBtn onClick={() => setActiveTab('scheduler')}>
+              <Play size={12}/> Start Run
+            </PrimaryBtn>
+          </div>
         </div>
-      </div>
 
-      {/* Quick actions */}
-      <div className="flex flex-wrap gap-2">
-        {[
-          { tab: 'scheduler', label: 'Scheduler', icon: Calendar },
-          { tab: 'video-shuffle', label: 'Shuffle', icon: Shuffle },
-          { tab: 'backlinks', label: 'Backlinks', icon: Link2 },
-          { tab: 'profiles', label: 'Profiles', icon: Users },
-          { tab: 'analytics', label: 'Analytics', icon: BarChart3 },
-          { tab: 'settings', label: 'Settings', icon: Settings },
-        ].map(({ tab, label, icon: Icon }) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-300 text-xs hover:border-gray-500 hover:text-white"
-          >
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-        {(liveWorkerCount > 0 || workerStats.waiting > 0) && (
-          <button
-            type="button"
-            onClick={handleStopAll}
-            disabled={stopping}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/80 text-white text-xs font-medium disabled:opacity-50"
-          >
-            {stopping ? 'Stopping…' : 'Stop all runs'}
-          </button>
-        )}
-      </div>
-
-      {/* Backend health strip */}
-      {health && (
-        <div className="flex flex-wrap gap-4 text-xs bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
-          <span className="text-green-400">● API {health.status}</span>
-          <span className="text-gray-400">Active schedules: <span className="text-white">{health.schedules}</span></span>
-          <span className="text-gray-400">CDP agents: <span className="text-white">{health.agents}</span></span>
-          <span className="text-gray-400">
-            Workers: <span className="text-white">{workerStats.running} run</span> / {workerStats.waiting} wait / {workerStats.done} done
-          </span>
-        </div>
-      )}
-
-      {(proxyExpired > 0 || proxyExpiringSoon > 0) && (
-        <div className="flex items-center gap-2 bg-amber-900/20 border border-amber-700/40 rounded-xl px-4 py-3 text-sm text-amber-200">
-          <AlertTriangle size={16} className="shrink-0" />
-          {proxyExpired > 0 && <span>{proxyExpired} profile(s) with expired proxy — renew on Profiles page.</span>}
-          {proxyExpiringSoon > 0 && <span>{proxyExpiringSoon} expiring within 2h.</span>}
-          <button type="button" onClick={() => setActiveTab('profiles')} className="ml-auto text-xs underline">
-            Profiles →
-          </button>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {stats.map(({ label, value, icon: Icon, color, sub, subColor }) => (
-          <div key={label} className={`bg-gradient-to-br ${colorMap[color]} border rounded-2xl p-5`}>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">{label}</p>
-                <p className="text-3xl font-bold text-white mt-1">{value}</p>
-                <p className={`text-xs mt-1 ${subColor}`}>{sub}</p>
+        {/* ── Status bar ──────────────────────────────────────────────────── */}
+        {health && (
+          <Card style={{ padding:'8px 16px' }}>
+            <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:'4px 16px', fontSize:11, color:'var(--mmb-muted)' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                <StatusDot color="var(--mmb-green)" pulse />
+                <span>API <strong style={{ color:'var(--mmb-green)' }}>OK</strong></span>
               </div>
-              <Icon size={20} className="opacity-80" />
+              <span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Schedules <strong style={{ color:'var(--mmb-accent)' }}>{health.schedules??0}</strong></span>
+              <span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Running <strong style={{ color:'var(--mmb-green)' }}>{wStats.running}</strong></span>
+              <span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Waiting <strong style={{ color:'var(--mmb-yellow)' }}>{wStats.waiting}</strong></span>
+              <span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Done <strong style={{ color:'var(--mmb-text)' }}>{wStats.done}</strong></span>
+              {conc && <><span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Slots <strong style={{ color:'var(--mmb-accent)' }}>{conc.running}/{conc.limit}</strong></span></>}
+              {(health.engagement?.running ?? 0) > 0 && <><span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Engagement <strong style={{ color:'var(--mmb-green)' }}>{health.engagement?.running}</strong></span></>}
+              {health.recycleEnabled && <><span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>24/7 <strong style={{ color:'var(--mmb-green)' }}>ON</strong></span></>}
+              {wStats.error>0 && <><span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Errors <strong style={{ color:'var(--mmb-red)' }}>{wStats.error}</strong></span></>}
+              {health.uptime && <><span style={{ color:'var(--mmb-border)' }}>|</span>
+              <span>Uptime <strong style={{ color:'var(--mmb-text2)' }}>{fmtUp(health.uptime)}</strong></span></>}
             </div>
-          </div>
-        ))}
-      </div>
+          </Card>
+        )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-white font-semibold flex items-center gap-2">
-              <Activity size={16} className="text-green-400" /> Live activity
-            </h2>
-            <button type="button" onClick={() => setActiveTab('profiles')} className="text-xs text-gray-500 hover:text-gray-300">
-              Profiles →
-            </button>
+        {/* ── Proxy alert ─────────────────────────────────────────────────── */}
+        {(pExpired>0||pWarn>0) && (
+          <div style={{
+            display:'flex', alignItems:'center', gap:10, padding:'10px 16px', borderRadius:10,
+            background:'var(--mmb-yellow-bg)', border:'1px solid var(--mmb-yellow)', fontSize:13,
+          }}>
+            <AlertTriangle size={14} style={{ color:'var(--mmb-yellow)', flexShrink:0 }}/>
+            <span style={{ flex:1, color:'var(--mmb-text2)' }}>
+              {pExpired>0 && <><strong>{pExpired} proxy expired</strong>&nbsp;</>}
+              {pWarn>0 && `· ${pWarn} expiring within 2h`}
+            </span>
+            <button onClick={()=>setActiveTab('profiles')} style={{
+              display:'flex', alignItems:'center', gap:3, fontSize:11, fontWeight:700,
+              color:'var(--mmb-yellow)', background:'transparent', border:'none', cursor:'pointer',
+            }}>Fix <ChevronRight size={11}/></button>
           </div>
-          {activeRows.length === 0 ? (
-            <div className="text-center py-8 text-gray-600 text-sm">
-              No active workers or running profiles. Start Scheduler or Shuffle.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {activeRows.map((r) => (
-                <div key={r.id} className="flex items-center gap-3 bg-gray-800/50 rounded-xl px-3 py-2.5">
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${isWorkerLive(r.status) || r.status === 'running' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-white text-xs font-medium truncate">{r.name}</span>
-                      <span className="text-[10px] text-gray-500">{r.os}</span>
-                      <span className="text-[10px] text-gray-600">{r.source === 'worker' ? 'schedule' : 'manual'}</span>
+        )}
+
+        {/* ── KPI Row ─────────────────────────────────────────────────────── */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:12 }}>
+          {kpis.map(k => <KpiCard key={k.label} {...k} />)}
+        </div>
+
+        {/* ── Main 2-col ──────────────────────────────────────────────────── */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:12 }}>
+          {/* Live Workers */}
+          <Card>
+            <CardHeader title="🟢 Live Workers"
+              action={
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span className="mmb-badge-green">{liveW.length} Active</span>
+                  <button onClick={()=>setActiveTab('monitor')} style={{
+                    fontSize:11, fontWeight:600, color:'var(--mmb-accent)',
+                    background:'transparent', border:'none', cursor:'pointer',
+                  }}>Monitor →</button>
+                </div>
+              }
+            />
+            <div style={{ padding:'0 0 12px' }}>
+              {liveW.length === 0 ? (
+                <div style={{ textAlign:'center', padding:'30px', color:'var(--mmb-muted)', fontSize:13 }}>
+                  No active workers
+                </div>
+              ) : (
+                liveW.slice(0,6).map(w => {
+                  const meta = workerMeta(w.status);
+                  return (
+                    <div key={w.profileId} style={{
+                      display:'flex', alignItems:'center', gap:12,
+                      padding:'10px 16px', borderBottom:'1px solid var(--mmb-border)',
+                    }}>
+                      <div style={{ width:7, height:7, borderRadius:'50%', background:meta.color, flexShrink:0 }}/>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:'var(--mmb-text)', marginBottom:2 }}>
+                          {w.profileName || w.profileId}
+                        </div>
+                        <div style={{ fontSize:11, color:'var(--mmb-muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                          {w.currentVideo || 'Connecting…'}
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                        {w.startedAt && <span style={{ fontSize:11, color:'var(--mmb-muted)' }}>{fmtUp(Date.now()-w.startedAt)}</span>}
+                        <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:99, background:meta.bg, color:meta.color }}>
+                          {meta.label}
+                        </span>
+                      </div>
                     </div>
-                    {r.detail && <p className="text-xs text-gray-500 truncate">{r.detail}</p>}
+                  );
+                })
+              )}
+              {/* Footer counts */}
+              <div style={{ display:'flex', gap:16, padding:'10px 16px 0', fontSize:12, color:'var(--mmb-muted)' }}>
+                <span><StatusDot color="var(--mmb-green)"/>&nbsp;{wStats.running} running</span>
+                <span><StatusDot color="var(--mmb-yellow)"/>&nbsp;{wStats.waiting} waiting</span>
+                <span><StatusDot color="#6b7280"/>&nbsp;{wStats.done} done</span>
+                {wStats.error>0 && <span><StatusDot color="var(--mmb-red)"/>&nbsp;{wStats.error} error</span>}
+              </div>
+            </div>
+          </Card>
+
+          {/* Traffic Sources */}
+          <Card>
+            <CardHeader title="📊 Traffic Sources"
+              action={<span style={{ fontSize:11, color:'var(--mmb-muted)' }}>Today · {totalTraffic.toLocaleString()}</span>}
+            />
+            <div style={{ padding:'0 16px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+              {trafficRows.length === 0 ? (
+                <div style={{ textAlign:'center', padding:'20px', color:'var(--mmb-muted)', fontSize:12 }}>No data yet</div>
+              ) : trafficRows.map(({ label, color, value }) => (
+                <div key={label}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4, fontSize:12 }}>
+                    <span style={{ color:'var(--mmb-text2)', display:'flex', alignItems:'center', gap:6 }}>
+                      <span style={{ width:8, height:8, borderRadius:'50%', background:color, display:'inline-block' }}/>
+                      {label}
+                    </span>
+                    <span style={{ color:'var(--mmb-accent)', fontWeight:700 }}>
+                      {totalTraffic>0?Math.round((value/totalTraffic)*100):0}%
+                    </span>
                   </div>
-                  <span className="text-[10px] text-gray-400 capitalize">{r.status}</span>
+                  <div style={{ height:5, background:'var(--mmb-border)', borderRadius:99, overflow:'hidden' }}>
+                    <div style={{
+                      height:'100%', borderRadius:99, background:color,
+                      width:`${totalTraffic>0?(value/totalTraffic)*100:0}%`,
+                      transition:'width .4s ease',
+                    }}/>
+                  </div>
+                </div>
+              ))}
+              {totalTraffic>0 && (
+                <div style={{ borderTop:'1px solid var(--mmb-border)', paddingTop:10, display:'flex', justifyContent:'space-between', fontSize:12 }}>
+                  <span style={{ color:'var(--mmb-muted)' }}>Total today</span>
+                  <span style={{ fontWeight:700, color:'var(--mmb-accent)' }}>{totalTraffic.toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        {/* ── Bottom 3-col ────────────────────────────────────────────────── */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:12 }}>
+          {/* Recent Events */}
+          <Card>
+            <CardHeader title="📋 Recent Events"/>
+            <div style={{ padding:'0 0 12px' }}>
+              {recent.length===0 ? (
+                <div style={{ textAlign:'center', padding:'20px', color:'var(--mmb-muted)', fontSize:12 }}>No events yet</div>
+              ) : recent.map((ev:any,i:number)=>(
+                <div key={i} style={{
+                  display:'flex', alignItems:'center', gap:10,
+                  padding:'8px 16px', borderBottom:'1px solid var(--mmb-border)',
+                  fontSize:12,
+                }}>
+                  <span style={{ color:'var(--mmb-muted)', fontVariantNumeric:'tabular-nums', minWidth:40, flexShrink:0 }}>
+                    {(() => { try { return new Date(ev.time ?? ev.ts ?? 0).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); } catch { return '—'; } })()}
+                  </span>
+                  <span style={{ fontSize:13 }}>
+                    {ev.action==='view'||ev.type==='view'?'👁':ev.action==='like'||ev.type==='like'?'❤️':ev.action==='subscribe'||ev.type==='subscribe'?'🔔':ev.action==='comment'||ev.type==='comment'?'💬':'📌'}
+                  </span>
+                  <div style={{ flex:1, minWidth:0, overflow:'hidden' }}>
+                    <span style={{ color:'var(--mmb-accent)', fontWeight:600 }}>
+                      {profiles.find(p=>p.id===ev.profileId)?.name || (ev.profileId ? ev.profileId.slice(0,10)+'…' : '—')}
+                    </span>
+                    {' '}
+                    <span style={{ color:'var(--mmb-muted)' }}>{ev.action ?? ev.type}</span>
+                    {ev.value!=null && ev.value>0 && <span style={{ color:'var(--mmb-text2)' }}> +{ev.value}</span>}
+                  </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </Card>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-white font-semibold flex items-center gap-2">
-              <TrendingUp size={16} className="text-blue-400" /> Recent activity (today)
-            </h2>
-            <button type="button" onClick={() => setActiveTab('analytics')} className="text-xs text-gray-500 hover:text-gray-300">
-              Analytics →
-            </button>
-          </div>
-          {recentActivity.length === 0 ? (
-            <div className="text-center py-8 text-gray-600 text-sm">No tracked activity today yet.</div>
-          ) : (
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {recentActivity.map((e, i) => {
-                const name = profiles.find((p) => p.id === e.profileId)?.name || e.profileId.slice(0, 8);
-                return (
-                  <div key={`${e.time}-${i}`} className="flex gap-2 text-xs py-1 border-b border-gray-800/50">
-                    <span className="text-gray-600 shrink-0 w-16">{new Date(e.time).toLocaleTimeString()}</span>
-                    <span className="text-gray-400 truncate w-24">{name}</span>
-                    <span className="text-white flex-1 truncate">{e.action.replace('traffic_', '').replace(/_/g, ' ')}</span>
-                  </div>
-                );
-              })}
+          {/* Ad Performance */}
+          <Card>
+            <CardHeader title="📺 Ad Performance"/>
+            <div style={{ padding:'8px 12px 12px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              {[
+                { label:'Ads Shown',    val:(data?.totalAds??0),        color:'var(--mmb-accent)', bg:'var(--mmb-accent-bg)' },
+                { label:'Skipped',      val:(data?.adsSkipped??0),       color:'var(--mmb-yellow)', bg:'var(--mmb-yellow-bg)' },
+                { label:'Full Watch',   val:(data?.adsWatchedFull??0),   color:'var(--mmb-green)', bg:'var(--mmb-green-bg)' },
+                { label:'Ad Watch Time',val:formatWatchTime(Math.round(data?.adWatchTime??0)), color:'var(--mmb-blue)', bg:'var(--mmb-blue-bg)' },
+              ].map(({label,val,color,bg})=>(
+                <div key={label} style={{
+                  background:bg, borderRadius:8, padding:'10px 8px',
+                  textAlign:'center',
+                }}>
+                  <div style={{ fontSize:18, fontWeight:800, color, lineHeight:1 }}>{val}</div>
+                  <div style={{ fontSize:10, color:'var(--mmb-muted)', marginTop:3 }}>{label}</div>
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
+          </Card>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-white font-semibold text-sm">Engagement limits (today)</h2>
-          <button type="button" onClick={() => setActiveTab('analytics')} className="text-xs text-gray-500 hover:text-gray-300">
-            Full analytics →
-          </button>
+          {/* Engagement */}
+          <Card>
+            <CardHeader title="💙 Engagement"
+              action={
+                <button onClick={()=>setActiveTab('engagement')} style={{
+                  fontSize:11, fontWeight:600, color:'var(--mmb-accent)',
+                  background:'transparent', border:'none', cursor:'pointer',
+                }}>View All →</button>
+              }
+            />
+            <div style={{ padding:'8px 12px 12px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              {[
+                { icon:ThumbsUp, label:'Likes', val:data?.totalLikes??0, color:'#ef4444', bg:'var(--mmb-red-bg)' },
+                { icon:Bell, label:'Subscribes', val:data?.totalSubscribes??0, color:'#f59e0b', bg:'var(--mmb-yellow-bg)' },
+                { icon:MessageSquare, label:'Comments', val:data?.totalComments??0, color:'#16a34a', bg:'var(--mmb-green-bg)' },
+                { icon:Eye, label:'Sessions', val:data?.totalSessions??0, color:'#4f46e5', bg:'var(--mmb-accent-bg)' },
+              ].map(({icon:Icon,label,val,color,bg})=>(
+                <div key={label} style={{ background:bg, borderRadius:8, padding:'10px 8px', textAlign:'center' }}>
+                  <Icon size={14} style={{ color, margin:'0 auto 4px', display:'block' }}/>
+                  <div style={{ fontSize:18, fontWeight:800, color, lineHeight:1 }}>{val.toLocaleString()}</div>
+                  <div style={{ fontSize:10, color:'var(--mmb-muted)', marginTop:3 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
-        <RateLimitDashboard profiles={profiles} />
+
+        {/* ── Quick nav ───────────────────────────────────────────────────── */}
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+          <span style={{ fontSize:12, color:'var(--mmb-muted)', alignSelf:'center', marginRight:4 }}>Quick Jump:</span>
+          {[
+            {id:'scheduler',l:'Scheduler',i:Calendar},{id:'video-shuffle',l:'Video Shuffle',i:Shuffle},
+            {id:'profiles',l:'Profiles',i:Users},{id:'analytics',l:'Analytics',i:BarChart3},
+            {id:'channels',l:'Channels',i:Tv},{id:'backlinks',l:'Backlinks',i:Link2},
+            {id:'settings',l:'Settings',i:Settings},
+          ].map(({id,l,i:Icon})=>(
+            <button key={id} onClick={()=>setActiveTab(id)} style={{
+              display:'flex', alignItems:'center', gap:5, padding:'6px 12px',
+              borderRadius:8, border:'1px solid var(--mmb-border)',
+              background:'var(--mmb-surface)', color:'var(--mmb-text2)',
+              fontSize:12, fontWeight:500, cursor:'pointer', transition:'all .15s',
+            }}>
+              <Icon size={12}/>{l}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

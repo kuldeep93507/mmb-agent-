@@ -1,69 +1,24 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import {
-  Activity, Clock, Tv, Square,
-  LayoutGrid, Play, RefreshCw, Pause, SkipForward, AlertCircle,
-} from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Activity, Pause, SkipForward, Square, AlertCircle, RefreshCw, Cpu, Globe, Clock, Wifi, WifiOff } from 'lucide-react';
+import LiveProgressPanel from './LiveProgressPanel';
 import { backendFetch } from '../services/backendOrigin';
 import type { Profile } from '../types';
+import { fetchEngagementStatus, type EngagementStatusResponse } from '../utils/dashboardApi';
 import {
   fetchRecycleStatus,
   stopRecycleLoop,
   pauseRecycleLoop,
   resumeRecycleLoop,
-  formatCooldownRemaining,
-  recycleStatusLabel,
   type RecycleStatus,
-  type RecycleSlotStatus,
 } from '../utils/recycleApi';
+import { PageShell, Card, CardHeader, Btn } from './ui';
 
-interface WorkerStatus {
-  profileId: string;
-  status: string;
-  currentVideo: string | null;
-  progress: string;
-  retries: number;
-  logs: { time: string; level: string; message: string }[];
-  results: { watched: number; failed: number; skipped: number } | null;
-  uptime: number;
-}
-
-interface DisplayRow extends WorkerStatus {
-  rowKey: string;
-  displayName: string;
-  source: 'worker' | 'recycle';
-  slotId?: string;
-  recycleStatus?: string;
-  cooldownUntil?: number | null;
-  cycleCount?: number;
-  lastError?: string | null;
-  isPaused?: boolean;
-}
-
-const ACTIVE_STATUSES = new Set(['running', 'watching', 'searching', 'waiting', 'starting', 'connecting']);
-const RECYCLE_ACTIVE = new Set(['running', 'cooldown', 'recreating', 'queued', 'error', 'idle']);
-
-function slotToRow(slot: RecycleSlotStatus): DisplayRow {
-  const statusMap: Record<string, string> = {
-    running: 'running', cooldown: 'cooldown', recreating: 'recreating',
-    queued: 'waiting', error: 'error', idle: 'waiting', stopped: 'stopped',
-  };
-  return {
-    rowKey: `slot-${slot.slotId}`,
-    profileId: slot.currentProfileId,
-    displayName: slot.profileName,
-    status: statusMap[slot.status] || slot.status,
-    currentVideo: slot.status === 'running' ? `${slot.videoCount} videos queued` : null,
-    progress: '—', retries: 0,
-    logs: slot.lastError ? [{ time: new Date().toISOString(), level: 'error', message: slot.lastError }] : [],
-    results: null, uptime: 0,
-    source: 'recycle',
-    slotId: slot.slotId,
-    recycleStatus: slot.status,
-    cooldownUntil: slot.cooldownUntil,
-    cycleCount: slot.cycleCount,
-    lastError: slot.lastError,
-    isPaused: slot.isPaused,
-  };
+interface OrchestratorStatus {
+  current_hour: number;
+  hour_weight: number;
+  peak_hour: number;
+  ram: { percent: number | null; available_gb: number; total_gb: number; note?: string };
+  hourly_weights: Record<number, number>;
 }
 
 interface MonitorPageProps {
@@ -71,115 +26,74 @@ interface MonitorPageProps {
   onRefreshProfiles?: () => void;
   onStartRecycle?: () => Promise<unknown>;
   canStartRecycle?: boolean;
+  setActiveTab?: (tab: string) => void;
 }
 
-export default function MonitorPage({ profiles = [], onRefreshProfiles, onStartRecycle, canStartRecycle = false }: MonitorPageProps) {
-  const [workers, setWorkers] = useState<WorkerStatus[]>([]);
-  const [stats, setStats] = useState({ total: 0, running: 0, done: 0, error: 0, waiting: 0 });
+export default function MonitorPage({
+  profiles = [],
+  onRefreshProfiles,
+  onStartRecycle,
+  canStartRecycle = false,
+  setActiveTab,
+}: MonitorPageProps) {
   const [recycleStatus, setRecycleStatus] = useState<RecycleStatus | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [pollError, setPollError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const refreshedRef = useRef<Set<string>>(new Set());
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [orchStatus, setOrchStatus] = useState<OrchestratorStatus | null>(null);
+  const [engStatus, setEngStatus] = useState<EngagementStatusResponse | null>(null);
+  const [backendOk, setBackendOk] = useState(true);
 
-  // 1s tick for cooldown countdown
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
+  const fetchOrchStatus = useCallback(async () => {
+    try {
+      const res = await backendFetch('/api/orchestrator/status', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) setOrchStatus(await res.json() as OrchestratorStatus);
+    } catch { /* non-fatal */ }
   }, []);
 
-  // Poll workers every 2s
+  const refreshAll = useCallback(async () => {
+    try {
+      const [wR, e] = await Promise.all([
+        backendFetch('/api/workers'),
+        fetchEngagementStatus(),
+      ]);
+      if (wR.ok) {
+        setPollError(null);
+        setBackendOk(true);
+      } else if (wR.status === 401) {
+        setPollError('Backend API key missing — check .env BACKEND_API_KEY and hard-refresh (Ctrl+Shift+R)');
+        setBackendOk(false);
+      } else {
+        setPollError(`Backend error (HTTP ${wR.status})`);
+        setBackendOk(false);
+      }
+      setEngStatus(e);
+    } catch (err) {
+      setPollError(err instanceof Error ? err.message : 'Backend unreachable — is python server running on port 3100?');
+      setBackendOk(false);
+    }
+    const s = await fetchRecycleStatus();
+    if (s) setRecycleStatus(s);
+    void fetchOrchStatus();
+  }, [fetchOrchStatus]);
+
   useEffect(() => {
-    const poll = async () => {
-      try {
-        const res = await backendFetch('/api/workers');
-        if (res.ok) {
-          const data = await res.json();
-          setWorkers(data.workers || []);
-          setStats(data.stats || { total: 0, running: 0, done: 0, error: 0, waiting: 0 });
-        }
-      } catch {}
-    };
-    poll();
-    const iv = setInterval(poll, 2000);
+    void refreshAll();
+    const iv = setInterval(() => void refreshAll(), 5000);
     return () => clearInterval(iv);
-  }, []);
+  }, [refreshAll]);
 
-  // Poll recycle status every 2s
   useEffect(() => {
     const poll = () => { void fetchRecycleStatus().then(s => { if (s) setRecycleStatus(s); }); };
     poll();
-    const iv = setInterval(poll, 2000);
+    const iv = setInterval(poll, 3000);
     return () => clearInterval(iv);
   }, []);
 
-  // Refresh profiles when recycle assigns new IDs
-  useEffect(() => {
-    if (!recycleStatus?.enabled || !onRefreshProfiles) return;
-    const profileIds = new Set(profiles.map(p => p.id));
-    for (const slot of recycleStatus.slots) {
-      if (!slot.enabled || !slot.currentProfileId) continue;
-      if (!profileIds.has(slot.currentProfileId) && !refreshedRef.current.has(slot.currentProfileId)) {
-        refreshedRef.current.add(slot.currentProfileId);
-        onRefreshProfiles();
-        break;
-      }
-    }
-  }, [recycleStatus, profiles, onRefreshProfiles]);
-
-  const profileName = useCallback((id: string, fallback?: string) =>
-    profiles.find(p => p.id === id)?.name || fallback || `Profile-${id.slice(-4)}`,
-  [profiles]);
-
-  const rows = useMemo((): DisplayRow[] => {
-    const workerById = new Map(workers.map(w => [w.profileId, w]));
-    const usedIds = new Set<string>();
-    const result: DisplayRow[] = [];
-    const enabledSlots = (recycleStatus?.slots || []).filter(s => s.enabled);
-
-    for (const slot of enabledSlots) {
-      const worker = workerById.get(slot.currentProfileId);
-      const workerActive = !!(worker && ACTIVE_STATUSES.has(worker.status));
-      if (workerActive) {
-        usedIds.add(worker!.profileId);
-        result.push({
-          ...worker!, rowKey: worker!.profileId,
-          displayName: profileName(worker!.profileId, slot.profileName),
-          source: 'worker', slotId: slot.slotId, recycleStatus: 'running',
-          cooldownUntil: null, cycleCount: slot.cycleCount, lastError: slot.lastError,
-          isPaused: slot.isPaused,
-        });
-      } else if (RECYCLE_ACTIVE.has(slot.status)) {
-        result.push(slotToRow(slot));
-      }
-    }
-    for (const w of workers) {
-      if (!usedIds.has(w.profileId)) {
-        result.push({ ...w, rowKey: w.profileId, displayName: profileName(w.profileId), source: 'worker' });
-      }
-    }
-    return result;
-  }, [workers, recycleStatus, profileName]);
-
   const recycleActive = !!(recycleStatus?.enabled && recycleStatus.slots.some(s => s.enabled));
   const isPausedAll = recycleActive && recycleStatus!.slots.filter(s => s.enabled).every(s => s.isPaused);
-
-  const runningCount = rows.filter(r => ACTIVE_STATUSES.has(r.status)).length;
-  const cooldownCount = rows.filter(r => r.status === 'cooldown').length;
-  const errorCount = rows.filter(r => r.status === 'error' || r.status === 'crashed').length;
-  const recreatingCount = rows.filter(r => r.status === 'recreating').length;
-  const doneCount = stats.done;
-
-  const overallPct = stats.total > 0 ? Math.round(((stats.done + stats.error) / stats.total) * 100) : 0;
-
-  const formatUptime = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const h = Math.floor(m / 60);
-    if (h > 0) return `${h}h${m % 60}m`;
-    if (m > 0) return `${m}m${s % 60}s`;
-    return `${s}s`;
-  };
+  const activeProfiles = profiles.filter(p => ['running', 'starting', 'watching'].includes(p.status)).length;
+  const engRunning = (engStatus?.running ?? 0) + (engStatus?.pending ?? 0);
 
   const withBusy = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -190,315 +104,212 @@ export default function MonitorPage({ profiles = [], onRefreshProfiles, onStartR
     }
   };
 
-  const stopWorker = async (profileId: string) => {
-    await backendFetch(`/api/workers/stop/${profileId}`, { method: 'POST' }).catch(() => {});
-  };
-
-  const stopAll = async () => {
-    await backendFetch('/api/schedule/stop', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-    }).catch(() => {});
-  };
-
-  const arrangeAll = async () => {
-    const ids = rows.filter(r => ACTIVE_STATUSES.has(r.status)).map(r => r.profileId);
-    if (!ids.length) return;
-    await backendFetch('/api/manual/batch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileIds: ids, command: 'arrangeWindows' }),
-    }).catch(() => {});
-  };
+  const statBox = (label: string, value: string, sub: string, color: string) => (
+    <div style={{
+      background: 'var(--mmb-surface2)', borderRadius: 10, padding: '12px 14px', textAlign: 'center',
+      border: '1px solid var(--mmb-border)',
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--mmb-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--mmb-muted)', marginTop: 4 }}>{sub}</div>
+    </div>
+  );
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-4">
-
-      {/* ── Page Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${runningCount > 0 ? 'bg-green-600 animate-pulse' : recycleActive ? 'bg-emerald-800' : 'bg-gray-700'}`}>
-            <Activity size={20} className="text-white" />
+    <PageShell>
+      <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Header */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: 12,
+              background: recycleActive ? 'var(--mmb-green-bg)' : 'var(--mmb-surface2)',
+              border: `1px solid ${recycleActive ? 'var(--mmb-green)' : 'var(--mmb-border)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Activity size={20} style={{ color: recycleActive ? 'var(--mmb-green)' : 'var(--mmb-muted)' }} />
+            </div>
+            <div>
+              <h1 style={{ fontSize: 18, fontWeight: 800, color: 'var(--mmb-text)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                Live Monitor
+                {recycleActive && <span className="mmb-badge-green">24/7 Active</span>}
+                {isPausedAll && <span className="mmb-badge-yellow">Paused</span>}
+              </h1>
+              <p style={{ fontSize: 12, color: 'var(--mmb-muted)', margin: '4px 0 0' }}>
+                Workers · engagement · recycle loop — real-time (5s refresh)
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              Live Monitor
-              {runningCount > 0 && <span className="text-xs text-green-400 animate-pulse font-normal">● RUNNING</span>}
-              {isPausedAll && <span className="text-xs text-amber-400 font-normal">⏸ PAUSED</span>}
-            </h1>
-            <p className="text-gray-500 text-xs">{rows.length} profiles • Real-time view (auto-refresh 2s)</p>
-          </div>
-        </div>
-
-        {/* ── Control Buttons ── */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Arrange Windows */}
-          {runningCount > 0 && (
-            <button onClick={() => void arrangeAll()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600/20 border border-purple-600/40 text-purple-300 text-xs font-medium hover:bg-purple-600/30 transition-all">
-              <LayoutGrid size={13} /> Arrange Windows
-            </button>
-          )}
-
-          {/* Stop All Workers */}
-          {runningCount > 0 && (
-            <button onClick={() => void withBusy(stopAll)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/20 border border-red-600/40 text-red-300 text-xs font-medium hover:bg-red-600/30 transition-all">
-              <Square size={13} /> Stop All Workers
-            </button>
-          )}
-
-          {/* Pause / Resume 24/7 Loop */}
-          {recycleActive && !isPausedAll && (
-            <button disabled={busy} onClick={() => void withBusy(pauseRecycleLoop)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600/20 border border-amber-600/40 text-amber-300 text-xs font-medium hover:bg-amber-600/30 disabled:opacity-50 transition-all">
-              <Pause size={13} /> Pause 24/7
-            </button>
-          )}
-          {recycleActive && isPausedAll && (
-            <button disabled={busy} onClick={() => void withBusy(resumeRecycleLoop)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-600/20 border border-green-600/40 text-green-300 text-xs font-medium hover:bg-green-600/30 disabled:opacity-50 transition-all">
-              <SkipForward size={13} /> Resume 24/7
-            </button>
-          )}
-
-          {/* Stop 24/7 Loop */}
-          {recycleActive && (
-            <button disabled={busy} onClick={() => void withBusy(() => stopRecycleLoop())}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-700/80 text-white text-xs font-medium hover:bg-red-600 disabled:opacity-50 transition-all">
-              <Square size={13} /> Stop 24/7
-            </button>
-          )}
-
-          {/* Start 24/7 Loop */}
-          {!recycleActive && onStartRecycle && canStartRecycle && (
-            <button disabled={busy} onClick={() => void withBusy(onStartRecycle!)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500 disabled:opacity-50 transition-all">
-              <Play size={13} /> Start 24/7
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Summary Stats Bar ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        {[
-          { label: 'Running', count: runningCount, color: 'text-green-400', bg: 'bg-green-900/20 border-green-700/30' },
-          { label: 'Cooldown', count: cooldownCount, color: 'text-amber-400', bg: 'bg-amber-900/20 border-amber-700/30' },
-          { label: 'Recreating', count: recreatingCount, color: 'text-purple-400', bg: 'bg-purple-900/20 border-purple-700/30' },
-          { label: 'Error', count: errorCount, color: 'text-red-400', bg: 'bg-red-900/20 border-red-700/30' },
-          { label: 'Done', count: doneCount, color: 'text-blue-400', bg: 'bg-blue-900/20 border-blue-700/30' },
-        ].map(({ label, count, color, bg }) => (
-          <div key={label} className={`${bg} border rounded-xl px-4 py-3 flex items-center justify-between`}>
-            <span className="text-xs text-gray-400">{label}</span>
-            <span className={`text-lg font-bold ${color}`}>{count}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Overall Progress Bar (only when non-recycle schedule running) ── */}
-      {stats.total > 0 && !recycleActive && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400">Schedule Progress</span>
-            <span className="text-xs font-mono text-white">{overallPct}% ({stats.done + stats.error}/{stats.total})</span>
-          </div>
-          <div className="h-2.5 bg-gray-700 rounded-full overflow-hidden">
-            <div className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${overallPct}%`, background: 'linear-gradient(90deg,#22c55e,#16a34a)' }} />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 99,
+              background: backendOk ? 'var(--mmb-green-bg)' : 'var(--mmb-red-bg)',
+              color: backendOk ? 'var(--mmb-green)' : 'var(--mmb-red)',
+            }}>
+              {backendOk ? <Wifi size={10}/> : <WifiOff size={10}/>}
+              {backendOk ? 'Live · 5s' : 'Offline'}
+            </span>
+            <Btn onClick={() => { setRefreshToken(t => t + 1); void refreshAll(); }} icon={<RefreshCw size={12}/>}>Refresh</Btn>
+            {recycleActive && !isPausedAll && (
+              <Btn onClick={() => void withBusy(pauseRecycleLoop)} disabled={busy} icon={<Pause size={12}/>}>Pause 24/7</Btn>
+            )}
+            {recycleActive && isPausedAll && (
+              <Btn onClick={() => void withBusy(resumeRecycleLoop)} disabled={busy} icon={<SkipForward size={12}/>}>Resume 24/7</Btn>
+            )}
+            {recycleActive && (
+              <Btn onClick={() => void withBusy(() => stopRecycleLoop())} disabled={busy} variant="danger" icon={<Square size={12}/>}>Stop 24/7</Btn>
+            )}
+            {setActiveTab && (
+              <Btn onClick={() => setActiveTab('engagement')}>Engagement →</Btn>
+            )}
           </div>
         </div>
-      )}
 
-      {/* ── Paused Banner ── */}
-      {isPausedAll && (
-        <div className="flex items-center gap-3 bg-amber-900/20 border border-amber-600/40 rounded-xl px-4 py-3">
-          <Pause size={16} className="text-amber-400 shrink-0" />
-          <p className="text-amber-200 text-sm">
-            24/7 loop <strong>paused</strong> — saare profiles freeze hain. Resume karo to immediately restart honge.
-          </p>
-          <button disabled={busy} onClick={() => void withBusy(resumeRecycleLoop)}
-            className="ml-auto flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs rounded-lg disabled:opacity-50 transition-all">
-            <SkipForward size={12} /> Resume Now
-          </button>
-        </div>
-      )}
-
-      {/* ── Empty State ── */}
-      {rows.length === 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-12 text-center">
-          <Activity size={32} className="text-gray-600 mx-auto mb-3" />
-          <h3 className="text-gray-400 font-medium">No active sessions</h3>
-          <p className="text-gray-600 text-sm mt-1">Shuffle ya 24/7 loop start karo — sab profiles yahan dikhenge.</p>
-        </div>
-      )}
-
-      {/* ── Profile Rows Table ── */}
-      {rows.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-800 bg-gray-800/40">
-            <span className="col-span-1 text-[10px] text-gray-500 uppercase tracking-wider">#</span>
-            <span className="col-span-3 text-[10px] text-gray-500 uppercase tracking-wider">Profile</span>
-            <span className="col-span-2 text-[10px] text-gray-500 uppercase tracking-wider">Status</span>
-            <span className="col-span-3 text-[10px] text-gray-500 uppercase tracking-wider">Current Video / Info</span>
-            <span className="col-span-2 text-[10px] text-gray-500 uppercase tracking-wider">Progress</span>
-            <span className="col-span-1 text-[10px] text-gray-500 uppercase tracking-wider text-right">Action</span>
+        {pollError && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10,
+            background: 'var(--mmb-red-bg)', border: '1px solid var(--mmb-red)', fontSize: 13,
+          }}>
+            <AlertCircle size={16} style={{ color: 'var(--mmb-red)', flexShrink: 0 }}/>
+            <p style={{ margin: 0, color: 'var(--mmb-text2)' }}>{pollError}</p>
           </div>
+        )}
 
-          <div className="divide-y divide-gray-800/60">
-            {rows.map((row, idx) => {
-              const isRunning = ACTIVE_STATUSES.has(row.status);
-              const isCooldown = row.status === 'cooldown';
-              const isRecreating = row.status === 'recreating';
-              const isDone = row.status === 'done';
-              const isError = row.status === 'error' || row.status === 'crashed';
-              const isPaused = !!row.isPaused;
-              const isExpanded = expanded === row.rowKey;
-              const cooldownText = isCooldown && row.cooldownUntil ? formatCooldownRemaining(row.cooldownUntil, now) : null;
-              const [done, total] = (row.progress || '0/0').split('/').map(Number);
-              const workerPct = total > 0 ? Math.round((done / total) * 100) : 0;
+        {isPausedAll && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10,
+            background: 'var(--mmb-yellow-bg)', border: '1px solid var(--mmb-yellow)', fontSize: 13,
+          }}>
+            <Pause size={16} style={{ color: 'var(--mmb-yellow)', flexShrink: 0 }}/>
+            <p style={{ margin: 0, flex: 1, color: 'var(--mmb-text2)' }}>
+              24/7 loop is <strong>paused</strong> — resume to restart profiles.
+            </p>
+            <Btn onClick={() => void withBusy(resumeRecycleLoop)} disabled={busy} icon={<SkipForward size={12}/>}>Resume Now</Btn>
+          </div>
+        )}
 
-              const rowBg = isRunning ? 'hover:bg-green-900/10' :
-                isCooldown && isPaused ? 'hover:bg-amber-900/10 bg-amber-900/5' :
-                isCooldown ? 'hover:bg-amber-900/8' :
-                isRecreating ? 'hover:bg-purple-900/10' :
-                isError ? 'hover:bg-red-900/8' : 'hover:bg-gray-800/30';
+        {/* Live stats row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+          {statBox('Profiles', String(profiles.length), `${activeProfiles} active now`, 'var(--mmb-accent)')}
+          {statBox('Engagement', String(engRunning), `${engStatus?.done ?? 0} done today`, 'var(--mmb-green)')}
+          {statBox('Recycle Slots', String(recycleStatus?.slots?.filter(s => s.enabled).length ?? 0), recycleActive ? 'loop running' : 'idle', recycleActive ? 'var(--mmb-green)' : 'var(--mmb-muted)')}
+          {statBox('Server RAM', orchStatus?.ram?.percent != null ? `${orchStatus.ram.percent.toFixed(0)}%` : '—', orchStatus?.ram?.available_gb != null ? `${orchStatus.ram.available_gb.toFixed(1)}GB free` : 'orchestrator', orchStatus?.ram?.percent != null && orchStatus.ram.percent >= 90 ? 'var(--mmb-red)' : 'var(--mmb-blue)')}
+        </div>
 
-              const statusDot = isRunning ? 'bg-green-500 animate-pulse' :
-                isCooldown && isPaused ? 'bg-amber-400' :
-                isCooldown ? 'bg-amber-600' :
-                isRecreating ? 'bg-purple-500 animate-spin' :
-                isDone ? 'bg-blue-500' :
-                isError ? 'bg-red-500' : 'bg-gray-600';
-
-              return (
-                <div key={row.rowKey}>
-                  <div
-                    className={`grid grid-cols-12 gap-2 px-4 py-3 cursor-pointer transition-colors ${rowBg}`}
-                    onClick={() => setExpanded(isExpanded ? null : row.rowKey)}
-                  >
-                    {/* # */}
-                    <div className="col-span-1 flex items-center">
-                      <div className={`w-2 h-2 rounded-full ${statusDot}`} />
-                      <span className="text-gray-600 text-xs ml-1.5">{idx + 1}</span>
-                    </div>
-
-                    {/* Profile name */}
-                    <div className="col-span-3 flex items-center min-w-0">
-                      <span className="text-white text-xs font-medium truncate">{row.displayName}</span>
-                      {typeof row.cycleCount === 'number' && row.cycleCount > 0 && (
-                        <span className="ml-1.5 text-[10px] text-gray-600 shrink-0">×{row.cycleCount}</span>
-                      )}
-                    </div>
-
-                    {/* Status badge */}
-                    <div className="col-span-2 flex items-center">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        isRunning ? 'bg-green-900/50 text-green-400' :
-                        isCooldown && isPaused ? 'bg-amber-900/50 text-amber-300' :
-                        isCooldown ? 'bg-amber-900/50 text-amber-400' :
-                        isRecreating ? 'bg-purple-900/50 text-purple-400' :
-                        isDone ? 'bg-blue-900/50 text-blue-400' :
-                        isError ? 'bg-red-900/50 text-red-400' : 'bg-gray-700 text-gray-400'
-                      }`}>
-                        {isPaused && isCooldown ? '⏸ Paused' : row.recycleStatus ? recycleStatusLabel(row.recycleStatus) : row.status}
-                      </span>
-                    </div>
-
-                    {/* Current video / info */}
-                    <div className="col-span-3 flex items-center min-w-0">
-                      {isRunning && row.currentVideo && (
-                        <p className="text-xs text-gray-400 truncate flex items-center gap-1">
-                          <Tv size={10} className="text-red-400 shrink-0" />
-                          {row.currentVideo}
-                        </p>
-                      )}
-                      {isCooldown && cooldownText && cooldownText !== '—' && !isPaused && (
-                        <p className="text-xs text-amber-300 flex items-center gap-1">
-                          <Clock size={10} className="shrink-0" /> {cooldownText}
-                        </p>
-                      )}
-                      {isPaused && (
-                        <p className="text-xs text-amber-400 flex items-center gap-1">
-                          <Pause size={10} className="shrink-0" /> Loop paused
-                        </p>
-                      )}
-                      {isRecreating && (
-                        <p className="text-xs text-purple-300 flex items-center gap-1">
-                          <RefreshCw size={10} className="shrink-0 animate-spin" /> Recreating…
-                        </p>
-                      )}
-                      {isError && row.lastError && (
-                        <p className="text-xs text-red-400 truncate flex items-center gap-1">
-                          <AlertCircle size={10} className="shrink-0" />
-                          {row.lastError}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Progress bar */}
-                    <div className="col-span-2 flex items-center gap-2">
-                      {!isCooldown && !isRecreating && (
-                        <>
-                          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full transition-all ${isDone ? 'bg-blue-500' : isError ? 'bg-red-500' : 'bg-green-500'}`}
-                              style={{ width: `${workerPct}%` }} />
-                          </div>
-                          <span className="text-[10px] font-mono text-gray-400 shrink-0">{row.progress || '0/0'}</span>
-                        </>
-                      )}
-                      {row.uptime > 0 && (
-                        <span className="text-[10px] text-gray-600">{formatUptime(row.uptime)}</span>
-                      )}
-                    </div>
-
-                    {/* Action: stop individual worker */}
-                    <div className="col-span-1 flex items-center justify-end">
-                      {isRunning && row.source === 'worker' && (
-                        <button
-                          onClick={e => { e.stopPropagation(); void stopWorker(row.profileId); }}
-                          title="Stop this worker"
-                          className="p-1 rounded text-red-500 hover:text-red-300 hover:bg-red-900/20 transition-all">
-                          <Square size={11} />
-                        </button>
-                      )}
-                    </div>
+        {/* Orchestrator card */}
+        {orchStatus && (
+          <Card>
+            <CardHeader
+              title="Orchestrator Status"
+              action={
+                <Btn onClick={() => void fetchOrchStatus()} icon={<RefreshCw size={11}/>}>Update</Btn>
+              }
+            />
+            <div style={{ padding: '14px 16px 16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 }}>
+                <div style={{ background: 'var(--mmb-surface2)', borderRadius: 10, padding: 12, textAlign: 'center', border: '1px solid var(--mmb-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
+                    <Clock size={12} style={{ color: 'var(--mmb-blue)' }}/>
+                    <span style={{ fontSize: 11, color: 'var(--mmb-muted)' }}>Current Hour</span>
                   </div>
-
-                  {/* Expanded: logs */}
-                  {isExpanded && (
-                    <div className="px-4 pb-3 pt-2 bg-gray-900/60 border-t border-gray-800/50">
-                      <p className="text-[10px] text-gray-500 mb-1.5 uppercase tracking-wider">Recent logs</p>
-                      <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                        {(row.logs || []).slice(-15).map((log, i) => (
-                          <div key={i} className="flex items-start gap-2 text-xs py-0.5">
-                            <span className="text-gray-600 shrink-0 w-16 font-mono text-[10px]">
-                              {new Date(log.time).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                            </span>
-                            <span className={`shrink-0 w-1.5 h-1.5 rounded-full mt-1.5 ${log.level === 'error' ? 'bg-red-500' : log.level === 'success' ? 'bg-green-500' : log.level === 'warn' ? 'bg-yellow-500' : 'bg-gray-600'}`} />
-                            <span className={`${log.level === 'error' ? 'text-red-400' : log.level === 'success' ? 'text-green-400' : log.level === 'warn' ? 'text-yellow-400' : 'text-gray-400'}`}>
-                              {log.message}
-                            </span>
-                          </div>
-                        ))}
-                        {(!row.logs || row.logs.length === 0) && (
-                          <p className="text-gray-600 text-xs">No logs yet</p>
-                        )}
+                  <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--mmb-text)' }}>{orchStatus.current_hour}:00</div>
+                  <div style={{ fontSize: 11, marginTop: 4, color: orchStatus.hour_weight >= 0.8 ? 'var(--mmb-green)' : orchStatus.hour_weight >= 0.5 ? 'var(--mmb-yellow)' : 'var(--mmb-muted)' }}>
+                    Weight {(orchStatus.hour_weight * 100).toFixed(0)}%
+                  </div>
+                </div>
+                <div style={{ background: 'var(--mmb-surface2)', borderRadius: 10, padding: 12, textAlign: 'center', border: '1px solid var(--mmb-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
+                    <Cpu size={12} style={{ color: 'var(--mmb-yellow)' }}/>
+                    <span style={{ fontSize: 11, color: 'var(--mmb-muted)' }}>RAM</span>
+                  </div>
+                  {orchStatus.ram.percent != null ? (
+                    <>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: orchStatus.ram.percent >= 92 ? 'var(--mmb-red)' : orchStatus.ram.percent >= 82 ? 'var(--mmb-yellow)' : 'var(--mmb-green)' }}>
+                        {orchStatus.ram.percent.toFixed(0)}%
                       </div>
-                      {row.results && (
-                        <div className="flex gap-4 mt-2 pt-2 border-t border-gray-800/50 text-xs">
-                          <span className="text-green-400">✓ {row.results.watched} watched</span>
-                          <span className="text-red-400">✗ {row.results.failed} failed</span>
-                          {row.results.skipped > 0 && <span className="text-yellow-400">⏭ {row.results.skipped} skipped</span>}
-                        </div>
-                      )}
-                    </div>
+                      <div style={{ fontSize: 11, color: 'var(--mmb-muted)', marginTop: 4 }}>
+                        {orchStatus.ram.available_gb.toFixed(1)}GB / {orchStatus.ram.total_gb.toFixed(0)}GB
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--mmb-muted)' }}>{orchStatus.ram.note || 'N/A'}</div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
+                <div style={{ background: 'var(--mmb-surface2)', borderRadius: 10, padding: 12, textAlign: 'center', border: '1px solid var(--mmb-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
+                    <Globe size={12} style={{ color: 'var(--mmb-green)' }}/>
+                    <span style={{ fontSize: 11, color: 'var(--mmb-muted)' }}>Profiles Loaded</span>
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--mmb-green)' }}>{profiles.length}</div>
+                  <div style={{ fontSize: 11, color: 'var(--mmb-muted)', marginTop: 4 }}>Proxy · Geo · TZ per profile</div>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--mmb-muted)', marginBottom: 8 }}>
+                24h traffic weights — peak {orchStatus.peak_hour}:00
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 44 }}>
+                {Array.from({ length: 24 }, (_, h) => {
+                  const w = orchStatus.hourly_weights?.[h] ?? 0.5;
+                  const isNow = h === orchStatus.current_hour;
+                  const heightPct = Math.max(10, Math.round(w * 100));
+                  const barColor = isNow ? 'var(--mmb-accent)' : w >= 0.8 ? 'var(--mmb-green)' : w >= 0.5 ? 'var(--mmb-yellow)' : 'var(--mmb-border2)';
+                  return (
+                    <div key={h} title={`${h}:00 — ${(w * 100).toFixed(0)}%${isNow ? ' (now)' : ''}`}
+                      style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                      <div style={{ height: `${heightPct}%`, minHeight: 4, borderRadius: 3, background: barColor, transition: 'height .3s' }}/>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--mmb-muted)', marginTop: 6 }}>
+                <span>0:00</span><span>6:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Active engagement jobs */}
+        {(engStatus?.jobs?.filter(j => ['running', 'pending', 'partial'].includes(j.status)).length ?? 0) > 0 && (
+          <Card>
+            <CardHeader title="Active Engagement Jobs" action={<span className="mmb-badge-green">{engRunning} live</span>} />
+            <div style={{ padding: '0 0 8px' }}>
+              {engStatus!.jobs.filter(j => ['running', 'pending', 'partial'].includes(j.status)).slice(0, 8).map(job => (
+                <div key={job.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+                  borderBottom: '1px solid var(--mmb-border)', fontSize: 12,
+                }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: job.status === 'running' ? 'var(--mmb-green)' : 'var(--mmb-yellow)',
+                    boxShadow: job.status === 'running' ? '0 0 0 0 var(--mmb-green)' : undefined,
+                    animation: job.status === 'running' ? 'mmb-pulse-dot 1.5s ease-out infinite' : undefined,
+                  }}/>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: 'var(--mmb-text)' }}>{job.profileName || job.profileId.slice(0, 12)}</div>
+                    <div style={{ color: 'var(--mmb-muted)', fontSize: 11 }}>
+                      {job.videosOk ?? 0}/{job.videoCount ?? '?'} videos · {job.status}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        <LiveProgressPanel
+          profiles={profiles}
+          hideWhenIdle={false}
+          showRecycleControls
+          showMonitorActions
+          refreshToken={refreshToken}
+          onStartRecycle={onStartRecycle as (() => Promise<void>) | undefined}
+          canStartRecycle={canStartRecycle}
+          onRefreshProfiles={onRefreshProfiles}
+          runLabel="Live Monitor"
+        />
+      </div>
+    </PageShell>
   );
 }
