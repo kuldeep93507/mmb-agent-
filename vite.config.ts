@@ -289,8 +289,8 @@ export default defineConfig(({ mode }) => {
     },
   },
   server: {
-    port: 5178,
-    strictPort: false,   // allow fallback to next available port if 5178 is busy
+    port: 5180,
+    strictPort: false,   // allow fallback to next available port if 5180 is busy
     host: true,
   },
   preview: {

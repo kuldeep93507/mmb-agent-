@@ -1,0 +1,40 @@
+{
+  "videos": [
+    {
+      "video_id": "KjNyAVwtAUg",
+      "title": "Best Credit Card 2026",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "url": "https://www.youtube.com/watch?v=KjNyAVwtAUg",
+      "enabled": true,
+      "priority": 1,
+      "added_at": "2026-05-31T00:00:00Z"
+    },
+    {
+      "video_id": "C64hwS63yIc",
+      "title": "Finance Tips 2026",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "url": "https://www.youtube.com/watch?v=C64hwS63yIc",
+      "enabled": true,
+      "priority": 2,
+      "added_at": "2026-05-31T00:01:00Z"
+    },
+    {
+      "video_id": "bOx62E3tOx0",
+      "title": "Investment Guide",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "url": "https://www.youtube.com/watch?v=bOx62E3tOx0",
+      "enabled": true,
+      "priority": 2,
+      "added_at": "2026-05-31T00:02:00Z"
+    },
+    {
+      "video_id": "DISABLED001",
+      "title": "Should be skipped",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "url": "https://www.youtube.com/watch?v=DISABLED001",
+      "enabled": false,
+      "priority": 1,
+      "added_at": "2026-05-31T00:03:00Z"
+    }
+  ]
+}

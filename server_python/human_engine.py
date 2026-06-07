@@ -391,6 +391,7 @@ async def slow_scroll(tab: Tab, rng: Any, *, delta_px: Optional[int] = None) -> 
 async def wait_for_player(tab: Tab, timeout: float = 25.0) -> bool:
     """Wait until main video element is loaded (post-ad safe)."""
     deadline = time.monotonic() + timeout
+    consecutive_ws_errors = 0
     while time.monotonic() < deadline:
         try:
             ready = await tab.evaluate(
@@ -410,9 +411,17 @@ async def wait_for_player(tab: Tab, timeout: float = 25.0) -> bool:
                 return_by_value=True,
             )
             raw = getattr(ready, "value", ready) if ready is not None else False
+            consecutive_ws_errors = 0  # reset on success
             if raw:
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            err_str = str(e).lower()
+            # Detect WebSocket disconnection — bail early so caller can reconnect
+            if "close frame" in err_str or "websocket" in err_str or "connection" in err_str:
+                consecutive_ws_errors += 1
+                if consecutive_ws_errors >= 3:
+                    return False  # Tab WS is dead — caller should reconnect
+            await asyncio.sleep(0.5)
+            continue
         await asyncio.sleep(0.5)
     return False

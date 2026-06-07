@@ -1,0 +1,18 @@
+{
+  "profile_id": "04deaf91-a662-40c9-ae4d-86c64d5dbd5d",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Madras",
+  "timezone": "America/Los_Angeles",
+  "lat": 44.6355,
+  "lon": -121.1415,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1536,
+  "screen_height": 864,
+  "noise_seed": 2026104161,
+  "canvas_noise": 0.003682,
+  "webgl_noise": 0.004125,
+  "audio_noise": 4.456e-05,
+  "cached_at": 1780672170.2145393
+}

@@ -297,7 +297,7 @@ def antidetect_real_summary(identity: ProfileIdentity, public_ip: str, proxy: di
     }
 
 
-async def resolve_identity_for_create(profile_id: str) -> tuple[ProfileIdentity, str]:
+async def resolve_identity_for_create(profile_id: str, custom_resolution: Optional[tuple[int, int]] = None) -> tuple[ProfileIdentity, str]:
     from server_python.identity_manager import get_identity_manager
     from server_python.smart_proxy import get_proxy_manager
 
@@ -305,7 +305,7 @@ async def resolve_identity_for_create(profile_id: str) -> tuple[ProfileIdentity,
     proxy_cfg = proxy_mgr.get_proxy_config(profile_id)
 
     mgr = get_identity_manager(proxy_manager=proxy_mgr)
-    identity = await mgr.get_identity(profile_id)
+    identity = await mgr.get_identity(profile_id, custom_resolution=custom_resolution)
     identity = mgr.align_with_proxy_hint(identity, proxy_cfg)
 
     public_ip = ""

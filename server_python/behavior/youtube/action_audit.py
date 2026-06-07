@@ -1,0 +1,109 @@
+"""
+behavior.youtube.action_audit — Honest engagement audit trail (JSON on disk).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+log = logging.getLogger("mmb.action_audit")
+
+_local = threading.local()
+_LOGS_DIR = Path(__file__).resolve().parents[3] / "logs"
+
+
+class ActionAudit:
+    """Records engagement action attempts and outcomes for honest test reports."""
+
+    def __init__(self, profile_id: str, profile_name: str = "") -> None:
+        self.profile_id = profile_id
+        self.profile_name = profile_name or profile_id[:8]
+        self.login_state: bool | None = None
+        self._entries: list[dict[str, Any]] = []
+
+    @property
+    def rows(self) -> list[dict[str, Any]]:
+        return list(self._entries)
+
+    def set_login_state(self, logged_in: bool) -> None:
+        self.login_state = logged_in
+        self._entries.append({
+            "action": "LOGIN_STATE",
+            "verified": logged_in,
+            "reason": "logged_in" if logged_in else "not_logged_in",
+            "ts": time.time(),
+        })
+
+    def record(
+        self,
+        action: str,
+        *,
+        selector_used: str = "",
+        click_registered: bool = False,
+        verified: bool = False,
+        reason: str = "",
+    ) -> None:
+        self._entries.append({
+            "action": action,
+            "selector": selector_used,
+            "clicked": click_registered,
+            "verified": verified,
+            "reason": reason,
+            "ts": time.time(),
+        })
+
+    def entries(self) -> list[dict]:
+        return self.rows
+
+    def truth_table(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "action": e.get("action"),
+                "pass": bool(e.get("verified")),
+                "clicked": bool(e.get("clicked")),
+                "reason": e.get("reason", ""),
+            }
+            for e in self._entries
+            if e.get("action") != "LOGIN_STATE"
+        ]
+
+    def save(self) -> str:
+        _LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        safe = "".join(c for c in self.profile_name if c.isalnum() or c in "-_")[:32]
+        path = _LOGS_DIR / f"action_audit_{safe}_{stamp}.json"
+        payload = {
+            "profile_id": self.profile_id,
+            "profile_name": self.profile_name,
+            "login_state": self.login_state,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "truth_table": self.truth_table(),
+            "entries": self._entries,
+        }
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+        log.info("[AUDIT] saved %s (%d rows)", path.name, len(self._entries))
+        return str(path)
+
+    @classmethod
+    def current(cls) -> Optional["ActionAudit"]:
+        return getattr(_local, "audit", None)
+
+    @classmethod
+    def set_current(cls, audit: Optional["ActionAudit"]) -> None:
+        _local.audit = audit
+
+    @classmethod
+    def enable(cls, profile_id: str, profile_name: str = "") -> "ActionAudit":
+        audit = ActionAudit(profile_id, profile_name)
+        cls.set_current(audit)
+        return audit
+
+    @classmethod
+    def disable(cls) -> None:
+        cls.set_current(None)

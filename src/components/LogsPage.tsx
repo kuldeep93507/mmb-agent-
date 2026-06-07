@@ -63,20 +63,29 @@ function safeLevel(level: string): LogLevel {
   return 'info';
 }
 
-function formatLogTime(ts: number): string {
+function normalizeTimestamp(ts: unknown): number {
+  if (typeof ts === 'number' && Number.isFinite(ts)) return ts;
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function formatLogTime(ts: unknown): string {
   try {
-    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return new Date(normalizeTimestamp(ts)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   } catch {
     return '—';
   }
 }
 
-function formatRelative(ts: number, now: number): string {
-  const diff = Math.max(0, now - ts);
+function formatRelative(ts: unknown, now: number): string {
+  const diff = Math.max(0, now - normalizeTimestamp(ts));
   if (diff < 60_000) return 'just now';
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
-  return new Date(ts).toLocaleDateString();
+  return new Date(ts as string | number).toLocaleDateString();
 }
 
 function headlineForLog(log: LogEntry): string {
@@ -103,7 +112,7 @@ export default function LogsPage({ profiles, onClear }: LogsPageProps) {
   const [profileFilter, setProfileFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'important' | 'all'>('important');
+  const [viewMode, setViewMode] = useState<'important' | 'all'>('all');
   const [autoScroll, setAutoScroll] = useState(true);
   const [fetchError, setFetchError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -130,7 +139,13 @@ export default function LogsPage({ profiles, onClear }: LogsPageProps) {
         profileId: profileFilter || undefined,
         search: search || undefined,
       });
-      setEntries(data.entries);
+      setEntries(
+        (data.entries || []).map((e) => ({
+          ...e,
+          timestamp: normalizeTimestamp(e.timestamp),
+          level: safeLevel(e.level),
+        })),
+      );
       setTotal(data.total);
       if (data.stats) setStats(data.stats);
       setFetchError('');
@@ -217,8 +232,8 @@ export default function LogsPage({ profiles, onClear }: LogsPageProps) {
           <div>
             <h1 className="text-2xl font-bold text-white">Activity Logs</h1>
             <p className="text-gray-500 text-sm mt-0.5 max-w-xl">
-              Yahan sab important events dikhte hain — schedule start/stop, shuffle, profile actions, worker errors.
-              Technical worker spam default mein chhupa hota hai.
+              Schedule, shuffle, engagement aur worker ki har line yahan live dikhti hai — video watch, quality, volume, errors sab.
+              &quot;Important&quot; view sirf summary ke liye hai.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

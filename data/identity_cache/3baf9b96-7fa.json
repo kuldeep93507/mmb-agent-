@@ -1,0 +1,18 @@
+{
+  "profile_id": "3baf9b96-7fa0-4cca-a0db-5051024030d3",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Grand Rapids",
+  "timezone": "America/Detroit",
+  "lat": 42.9656,
+  "lon": -85.65,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 2360900054,
+  "canvas_noise": 0.001004,
+  "webgl_noise": 0.001896,
+  "audio_noise": 8.255e-05,
+  "cached_at": 1780580651.235501
+}

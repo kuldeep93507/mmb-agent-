@@ -1,0 +1,18 @@
+{
+  "profile_id": "b59da391-df82-4295-bf99-008fb3880e3c",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Miami",
+  "timezone": "America/New_York",
+  "lat": 25.7701,
+  "lon": -80.1928,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 2560,
+  "screen_height": 1440,
+  "noise_seed": 1489853433,
+  "canvas_noise": 0.001768,
+  "webgl_noise": 0.003275,
+  "audio_noise": 8.888e-05,
+  "cached_at": 1780629761.9775107
+}

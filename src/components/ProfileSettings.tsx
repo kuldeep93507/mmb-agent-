@@ -506,8 +506,7 @@ export default function ProfileSettings({ profile, onClose, onRenewProxy }: Prof
               <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
                 <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2"><Heart size={14} className="text-red-400" /> Engagement</h3>
                 <p className="text-xs text-gray-500 mb-3 flex items-center gap-2 flex-wrap">
-                  Like, Subscribe, Comment — daily caps set karo
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40">Coming Soon — cap enforce nahi hota abhi</span>
+                  Like, Subscribe, Comment settings
                 </p>
                 <div className="space-y-3">
                   {/* Like */}

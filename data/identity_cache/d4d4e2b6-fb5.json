@@ -1,0 +1,18 @@
+{
+  "profile_id": "d4d4e2b6-fb56-46c1-94b6-50544bf68a95",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Denver",
+  "timezone": "America/Denver",
+  "lat": 39.6796,
+  "lon": -104.9626,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 289307737,
+  "canvas_noise": 0.002439,
+  "webgl_noise": 0.002026,
+  "audio_noise": 6.402e-05,
+  "cached_at": 1780629792.4893835
+}

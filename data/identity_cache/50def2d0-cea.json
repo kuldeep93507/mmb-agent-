@@ -1,0 +1,18 @@
+{
+  "profile_id": "50def2d0-cea6-49a6-ac96-30ca01304dca",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Detroit",
+  "timezone": "America/Detroit",
+  "lat": 42.3314,
+  "lon": -83.0457,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1536,
+  "screen_height": 864,
+  "noise_seed": 3170856690,
+  "canvas_noise": 0.006645,
+  "webgl_noise": 0.004241,
+  "audio_noise": 5.211e-05,
+  "cached_at": 1780580665.9178941
+}

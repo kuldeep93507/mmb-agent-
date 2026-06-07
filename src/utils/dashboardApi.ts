@@ -12,6 +12,11 @@ export interface BackendHealth {
   concurrency?: { limit: number; running: number; available: number };
 }
 
+export interface EngagementJobLogEntry {
+  t?: string;
+  msg?: string;
+}
+
 export interface EngagementJobSummary {
   id: string;
   profileId: string;
@@ -22,6 +27,7 @@ export interface EngagementJobSummary {
   videosFailed?: number;
   startedAt?: number | null;
   finishedAt?: number | null;
+  log?: EngagementJobLogEntry[];
 }
 
 export interface EngagementStatusResponse {

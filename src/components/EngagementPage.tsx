@@ -47,9 +47,15 @@ interface ProfileOverride {
   bell:             boolean;
   comment:          boolean;
   descriptionLinks: boolean;
+  // Per-profile settings (user decides from tool — Rule: jo tool se set karo wahi use ho)
+  quality:          VideoQuality;
+  watchPct:         number;   // exact watch % (e.g. 80)
+  volumePct:        number;   // volume level per profile
+  seekEnabled:      boolean;
+  adSkip:           boolean;
 }
 
-const ACTION_COLS: { key: keyof Omit<ProfileOverride, 'source'>; emoji: string; label: string; color: string }[] = [
+const ACTION_COLS: { key: 'like' | 'dislike' | 'subscribe' | 'bell' | 'comment' | 'descriptionLinks'; emoji: string; label: string; color: string }[] = [
   { key: 'like',             emoji: '👍', label: 'Like',    color: 'text-green-400'  },
   { key: 'dislike',          emoji: '👎', label: 'Dislike', color: 'text-red-400'    },
   { key: 'subscribe',        emoji: '📺', label: 'Sub',     color: 'text-blue-400'   },
@@ -107,8 +113,8 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
   const [watchPctMin,        setWatchPctMin]        = useState(80);
   const [watchPctMax,        setWatchPctMax]        = useState(100);
   const [adSkipEnabled,      setAdSkipEnabled]      = useState(true);
-  const [adSkipDelaySec,     setAdSkipDelaySec]     = useState(5);
-  const [adSkipDelayMaxSec,  setAdSkipDelayMaxSec]  = useState(15);
+  const [adSkipDelaySec,     setAdSkipDelaySec]     = useState(10);
+  const [adSkipDelayMaxSec,  setAdSkipDelayMaxSec]  = useState(14);
   const [videoQuality,       setVideoQuality]       = useState<VideoQuality>('auto');
   const [activeLaunchLimit,  setActiveLaunchLimit]  = useState(20);
   const [startGapMinSec,     setStartGapMinSec]     = useState(10);
@@ -116,6 +122,10 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
   const [srcNotif,           setSrcNotif]           = useState(20);
   const [srcSearch,          setSrcSearch]          = useState(30);
   const [srcHome,            setSrcHome]            = useState(30);
+  const [captionsEnabled,    setCaptionsEnabled]    = useState(false);
+  const [playbackSpeed,      setPlaybackSpeed]      = useState('1x');
+  const [naturalScrollCurves,setNaturalScrollCurves]= useState(true);
+  const [uniqueTypingPersonality,setUniqueTypingPersonality] = useState(true);
 
   // ── Per-profile overrides ─────────────────────────────────────────────────────
   const [profileOverrides, setProfileOverrides] = useState<Record<string, ProfileOverride>>({});
@@ -146,24 +156,43 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     setBellPct(p.bell);
     setCommentPct(p.comment);
     setCommentLikePct(p.commentLike);
+    // Refresh per-profile toggles from new percentages
+    setTimeout(() => applyGlobalPct(), 0);
+  }
+
+  /** Deterministic pct slot — 70% like + 1 profile => like ON (no silent random OFF). */
+  function pctSlotOn(pct: number, profileIndex: number, profileCount: number): boolean {
+    if (pct <= 0) return false;
+    if (pct >= 100) return true;
+    // Single profile test: slider > 0 means action ON (no silent skip)
+    if (profileCount === 1) return true;
+    const slot = ((profileIndex + 0.5) / Math.max(1, profileCount)) * 100;
+    return slot < pct;
   }
 
   // ── Helper: build a default override for a profile ───────────────────────────
-  function makeDefault(): ProfileOverride {
+  function makeDefault(profileIndex = 0, profileCount = 1): ProfileOverride {
     const roll = rand(1, 100);
     const source: Source =
       roll <= srcNotif                          ? 'notification' :
       roll <= srcNotif + srcSearch              ? 'search' :
       roll <= srcNotif + srcSearch + srcHome    ? 'homepage' :
       'direct';
+    const count = Math.max(1, profileCount);
     return {
       source,
-      like:             Math.random() * 100 < likePct,
-      dislike:          Math.random() * 100 < dislikePct,
-      subscribe:        Math.random() * 100 < subscribePct,
-      bell:             Math.random() * 100 < bellPct,
-      comment:          Math.random() * 100 < commentPct,
+      like:             pctSlotOn(likePct, profileIndex, count),
+      dislike:          pctSlotOn(dislikePct, profileIndex, count),
+      subscribe:        pctSlotOn(subscribePct, profileIndex, count),
+      bell:             pctSlotOn(bellPct, profileIndex, count),
+      comment:          pctSlotOn(commentPct, profileIndex, count),
       descriptionLinks: descDefault,
+      // Per-profile defaults from global settings (user can override per-profile)
+      quality:     videoQuality,
+      watchPct:    rand(watchPctMin, watchPctMax),
+      volumePct:   volumePct,
+      seekEnabled: seekEnabled,
+      adSkip:      adSkipEnabled,
     };
   }
 
@@ -172,17 +201,20 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     setSelectedIds(new Set(gmailProfiles.map(p => p.id)));
     setProfileOverrides(prev => {
       const next = { ...prev };
-      gmailProfiles.forEach(p => { if (!next[p.id]) next[p.id] = makeDefault(); });
+      gmailProfiles.forEach((p, i) => {
+        if (!next[p.id]) next[p.id] = makeDefault(i, gmailProfiles.length);
+      });
       return next;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles.length]);
 
   function applyGlobalPct() {
+    const sel = gmailProfiles.filter(p => selectedIds.has(p.id));
     setProfileOverrides(prev => {
       const next = { ...prev };
-      gmailProfiles.forEach(p => {
-        if (selectedIds.has(p.id)) next[p.id] = makeDefault();
+      sel.forEach((p, i) => {
+        next[p.id] = makeDefault(i, sel.length);
       });
       return next;
     });
@@ -201,6 +233,16 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     setProfileOverrides(prev => {
       const next = { ...prev };
       sel.forEach(p => { next[p.id] = { ...(next[p.id] ?? makeDefault()), [key]: !allOn }; });
+      return next;
+    });
+  }
+
+  /** Force-set a column to a specific value across all selected profiles. */
+  function setColAll(key: keyof Omit<ProfileOverride, 'source'>, value: boolean) {
+    const sel = gmailProfiles.filter(p => selectedIds.has(p.id));
+    setProfileOverrides(prev => {
+      const next = { ...prev };
+      sel.forEach(p => { next[p.id] = { ...(next[p.id] ?? makeDefault()), [key]: value }; });
       return next;
     });
   }
@@ -254,12 +296,18 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     let cumulativeDelayMs = 0;
 
     return sel.map((p, i) => {
-      const ov = profileOverrides[p.id] ?? makeDefault();
+      const ov = profileOverrides[p.id] ?? makeDefault(i, sel.length);
+      const gmailReady = !!(gmailMeta[p.id]?.email?.trim());
       const commentText =
         ov.comment && templates.length > 0
           ? templates[rand(0, templates.length - 1)].text
           : '';
-      const profileWatchPct = rand(watchPctMin, watchPctMax);
+      // Rule: jo tool se set karo wahi use ho — per-profile values, not global random
+      const profileWatchPct = ov.watchPct ?? rand(watchPctMin, watchPctMax);
+      const profileQuality  = ov.quality   ?? videoQuality;
+      const profileVolume   = ov.volumePct ?? volumePct;
+      const profileSeek     = ov.seekEnabled ?? seekEnabled;
+      const profileAdSkip   = ov.adSkip    ?? adSkipEnabled;
       if (i > 0) cumulativeDelayMs += rand(startGapMinSec, Math.max(startGapMinSec, startGapMaxSec)) * 1000;
       const delayMs = cumulativeDelayMs;
       return {
@@ -277,11 +325,27 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
           commentText,
           descriptionLinks:  ov.descriptionLinks,
           descriptionExpand: descExpandEnabled,
-          volumePct,
+          volumePct:         profileVolume,
           commentLikePct,
-          seekEnabled,
+          seekEnabled:       profileSeek,
           seekDirection,
           pauseProbability:  pauseProbabilityPct / 100,
+          adSkipEnabled:     profileAdSkip,
+          adSkipDelaySec,
+          adSkipDelayMaxSec,
+          videoQuality:      profileQuality,
+          // Gmail profiles on this page — trust login, backend must not DOM-detect
+          gmailLoggedIn:     true,
+          gmailReady:        gmailReady,
+          gmailEmail:        gmailMeta[p.id]?.email || null,
+          // Extra playback settings
+          captionsEnabled:         captionsEnabled,
+          captionsToggle:          captionsEnabled,
+          playbackSpeed:           playbackSpeed,
+          speedChange:             playbackSpeed !== '1x',
+          speedChangeEnabled:      playbackSpeed !== '1x',
+          naturalScrollCurves:     naturalScrollCurves,
+          uniqueTypingPersonality: uniqueTypingPersonality,
         },
         videos:   videoQueue,
         watchPct: profileWatchPct,
@@ -489,56 +553,75 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
 
             {/* ─── TAB: Engagement ─── */}
             {activeSettingsTab === 'engagement' && (
-              <div className="p-5">
-                <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
-                  {/* LEFT: Presets */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs text-gray-400 font-semibold uppercase tracking-wider mb-3">Quick Presets</h3>
-                    {([
-                      { id: 'aggressive' as const, label: '🔥 Aggressive', desc: 'Like 90% · Sub 50% · Bell 50% · Cmt 40%', color: 'hover:border-green-600/60', activeColor: 'text-green-400' },
-                      { id: 'natural' as const, label: '👤 Natural', desc: 'Like 70% · Sub 30% · Bell 30% · Cmt 20%', color: 'hover:border-blue-600/60', activeColor: 'text-blue-400' },
-                      { id: 'minimal' as const, label: '🌱 Minimal', desc: 'Like 40% · Sub 10% · Bell 0% · Cmt 5%', color: 'hover:border-yellow-600/60', activeColor: 'text-yellow-400' },
-                      { id: 'custom' as const, label: '⚙ Custom', desc: 'Manually adjust sliders →', color: 'hover:border-purple-600/60', activeColor: 'text-purple-400' },
-                    ]).map(preset => (
-                      <button key={preset.id} onClick={() => applyPreset(preset.id)}
-                        className={`w-full text-left p-3.5 rounded-xl border transition-all ${activePreset === preset.id ? 'border-red-500 bg-red-500/8' : `border-gray-700 bg-gray-800/50 ${preset.color}`}`}>
-                        <div className="flex items-center justify-between">
-                          <span className={`text-sm font-semibold ${activePreset === preset.id ? 'text-white' : preset.activeColor}`}>{preset.label}</span>
-                          {activePreset === preset.id && <span className="text-[10px] text-green-400 font-semibold">✓ Active</span>}
-                        </div>
-                        <p className="text-[11px] text-gray-500 mt-1">{preset.desc}</p>
+              <div className="p-5 space-y-5">
+                {/* ── Bulk Action Buttons (apply to all selected profiles) ── */}
+                <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                      ⚡ Bulk Actions
+                      <span className="text-[10px] text-gray-500 font-normal">— click to enable on ALL selected profiles</span>
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          ACTION_COLS.forEach(col => setColAll(col.key, true));
+                        }}
+                        className="text-[10px] text-green-400 hover:text-green-300 border border-green-700/30 px-2.5 py-1 rounded-lg font-semibold"
+                      >
+                        ✓ Enable All
                       </button>
-                    ))}
-                    <div className="mt-3 p-3 rounded-xl bg-amber-900/10 border border-amber-800/30">
-                      <p className="text-[10px] text-amber-400/80 leading-relaxed">💡 Presets apply to ALL selected profiles. Switch to "Per Profile" for individual control.</p>
+                      <button
+                        onClick={() => {
+                          ACTION_COLS.forEach(col => setColAll(col.key, false));
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300 border border-red-700/30 px-2.5 py-1 rounded-lg font-semibold"
+                      >
+                        ✕ Disable All
+                      </button>
                     </div>
                   </div>
 
-                  {/* RIGHT: Sliders */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Engagement Sliders</h3>
-                      <button onClick={applyGlobalPct} className="text-[10px] text-blue-400 hover:text-blue-300 border border-blue-700/30 px-2.5 py-1 rounded-lg font-semibold">Apply → All Profiles</button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                      {[
-                        { label: '👍 Like', value: likePct, set: setLikePct, color: 'accent-green-500' },
-                        { label: '👎 Dislike', value: dislikePct, set: setDislikePct, color: 'accent-red-500' },
-                        { label: '📺 Subscribe', value: subscribePct, set: setSubscribePct, color: 'accent-blue-500' },
-                        { label: '🔔 Bell', value: bellPct, set: setBellPct, color: 'accent-yellow-500' },
-                        { label: '💬 Comment', value: commentPct, set: setCommentPct, color: 'accent-purple-500' },
-                        { label: '👍💬 Comment Like', value: commentLikePct, set: setCommentLikePct, color: 'accent-pink-500' },
-                      ].map(s => (
-                        <div key={s.label} className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-300 font-medium">{s.label}</span>
-                            <span className="text-white text-xs font-mono bg-gray-800 border border-gray-700 px-2 py-0.5 rounded">{s.value}%</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                    {ACTION_COLS.map(col => {
+                      const allOn = colAllChecked(col.key);
+                      return (
+                        <div key={col.key} className="bg-gray-900/50 border border-gray-700/40 rounded-lg p-2.5 space-y-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">{col.emoji}</span>
+                            <span className={`text-[11px] font-medium ${col.color}`}>{col.label}</span>
                           </div>
-                          <input type="range" min={0} max={100} step={5} value={s.value} onChange={e => { s.set(Number(e.target.value)); setActivePreset('custom'); }} className={`w-full h-1.5 rounded-full appearance-none bg-gray-700 ${s.color}`} />
+                          <div className="grid grid-cols-2 gap-1">
+                            <button
+                              onClick={() => setColAll(col.key, true)}
+                              title={`Enable ${col.label} on all selected profiles`}
+                              className={`px-2 py-1 rounded text-[10px] font-semibold transition-all ${
+                                allOn
+                                  ? 'bg-green-600/30 text-green-300 border border-green-600/50'
+                                  : 'bg-gray-800 text-gray-500 border border-gray-700 hover:border-green-700/40 hover:text-green-400'
+                              }`}
+                            >
+                              All ON
+                            </button>
+                            <button
+                              onClick={() => setColAll(col.key, false)}
+                              title={`Disable ${col.label} on all selected profiles`}
+                              className={`px-2 py-1 rounded text-[10px] font-semibold transition-all ${
+                                !allOn && gmailProfiles.filter(p => selectedIds.has(p.id)).every(p => !(profileOverrides[p.id]?.[col.key]))
+                                  ? 'bg-red-600/30 text-red-300 border border-red-600/50'
+                                  : 'bg-gray-800 text-gray-500 border border-gray-700 hover:border-red-700/40 hover:text-red-400'
+                              }`}
+                            >
+                              All OFF
+                            </button>
+                          </div>
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
+
+                  <p className="text-[10px] text-gray-600 mt-3">
+                    💡 Per-profile control: neeche table mein har profile ka individual checkbox toggle karo. Yeh buttons sirf bulk shortcut hain — final decision per-profile checkbox mein reflect hoga.
+                  </p>
                 </div>
               </div>
             )}
@@ -636,6 +719,35 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         <span className="text-xs text-gray-400 flex-1">⏸ Pause %</span>
                         <input type="range" min={0} max={50} step={2} value={pauseProbabilityPct} onChange={e => setPauseProbabilityPct(Number(e.target.value))} className="w-24 accent-gray-400" />
                         <span className="text-white text-xs font-mono w-8 text-right">{pauseProbabilityPct}%</span>
+                      </div>
+                      {/* Captions */}
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs text-gray-300">📝 Captions (CC)</span>
+                        <button onClick={() => setCaptionsEnabled(v => !v)} className={`relative w-9 h-5 rounded-full transition-all ${captionsEnabled ? 'bg-indigo-500' : 'bg-gray-700'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${captionsEnabled ? 'left-4' : 'left-0.5'}`} />
+                        </button>
+                      </div>
+                      {/* Playback Speed */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-300">⚡ Speed</span>
+                        <select value={playbackSpeed} onChange={e => setPlaybackSpeed(e.target.value)}
+                          className="bg-gray-800 border border-gray-700 text-gray-200 rounded px-2 py-0.5 text-xs focus:outline-none">
+                          {['0.75x','1x','1.25x','1.5x','1.75x','2x'].map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
+                      {/* Natural Scroll */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-300">🖱 Natural scroll</span>
+                        <button onClick={() => setNaturalScrollCurves(v => !v)} className={`relative w-9 h-5 rounded-full transition-all ${naturalScrollCurves ? 'bg-teal-500' : 'bg-gray-700'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${naturalScrollCurves ? 'left-4' : 'left-0.5'}`} />
+                        </button>
+                      </div>
+                      {/* Unique Typing */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-300">⌨️ Unique typing</span>
+                        <button onClick={() => setUniqueTypingPersonality(v => !v)} className={`relative w-9 h-5 rounded-full transition-all ${uniqueTypingPersonality ? 'bg-violet-500' : 'bg-gray-700'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${uniqueTypingPersonality ? 'left-4' : 'left-0.5'}`} />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -773,6 +885,11 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         </button>
                       </th>
                     ))}
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[70px]">🎬 Quality</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[64px]">⏱ Watch%</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[56px]">🔊 Vol%</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">⏭ Seek</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">🚫 Ad</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/40">
@@ -794,6 +911,37 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                             <input type="checkbox" checked={ov?.[col.key] ?? false} onChange={e => setOverride(p.id, col.key, e.target.checked)} className="accent-red-500 cursor-pointer w-3.5 h-3.5" />
                           </td>
                         ))}
+                        {/* Per-profile: Quality */}
+                        <td className="px-1 py-2 text-center">
+                          <select value={ov?.quality ?? videoQuality} onChange={e => setOverride(p.id, 'quality', e.target.value as VideoQuality)}
+                            className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5 text-[10px] focus:outline-none w-full cursor-pointer">
+                            {QUALITY_OPTIONS.map(q => <option key={q} value={q}>{q}</option>)}
+                          </select>
+                        </td>
+                        {/* Per-profile: Watch % */}
+                        <td className="px-1 py-2 text-center">
+                          <input type="number" min={10} max={100} step={5}
+                            value={ov?.watchPct ?? rand(watchPctMin, watchPctMax)}
+                            onChange={e => setOverride(p.id, 'watchPct', Math.max(10, Math.min(100, Number(e.target.value))))}
+                            className="w-12 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                          <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                        </td>
+                        {/* Per-profile: Volume % */}
+                        <td className="px-1 py-2 text-center">
+                          <input type="number" min={20} max={100} step={5}
+                            value={ov?.volumePct ?? volumePct}
+                            onChange={e => setOverride(p.id, 'volumePct', Math.max(20, Math.min(100, Number(e.target.value))))}
+                            className="w-12 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                          <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                        </td>
+                        {/* Per-profile: Seek toggle */}
+                        <td className="px-2 py-2.5 text-center">
+                          <input type="checkbox" checked={ov?.seekEnabled ?? seekEnabled} onChange={e => setOverride(p.id, 'seekEnabled', e.target.checked)} className="accent-cyan-500 cursor-pointer w-3.5 h-3.5" />
+                        </td>
+                        {/* Per-profile: Ad skip toggle */}
+                        <td className="px-2 py-2.5 text-center">
+                          <input type="checkbox" checked={ov?.adSkip ?? adSkipEnabled} onChange={e => setOverride(p.id, 'adSkip', e.target.checked)} className="accent-blue-500 cursor-pointer w-3.5 h-3.5" />
+                        </td>
                       </tr>
                     );
                   })}

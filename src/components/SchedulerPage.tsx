@@ -178,7 +178,9 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
           } : s));
 
           const currentSchedule = schedulesRef.current.find(s => s.id === id);
-          if (currentSchedule?.repeatEnabled && currentSchedule.repeatInterval) {
+          // For 'scheduled' run mode the backend timer handles repeats (works even if the
+          // app is closed). Only repeat client-side for manual/countdown runs to avoid double-firing.
+          if (currentSchedule?.repeatEnabled && currentSchedule.repeatInterval && currentSchedule.runMode !== 'scheduled') {
             const delay = repeatDelayMs[currentSchedule.repeatInterval] ?? repeatDelayMs['6hr'];
             window.setTimeout(() => { void handleRunRef.current(id); }, delay);
           }

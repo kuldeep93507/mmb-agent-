@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Copy, Shuffle, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Copy, Shuffle, MessageSquare, Sparkles, Loader2 } from 'lucide-react';
 import { hydrateCommentsFromServer, saveCommentsToServer } from '../utils/appDataApi';
+import { backendFetch } from '../services/backendOrigin';
 
 interface CommentTemplate {
   id: string;
@@ -18,6 +19,13 @@ export default function CommentTemplatesPage() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkText, setBulkText] = useState('');
+  // ── AI Generate ─────────────────────────────────────────────
+  const [aiMode, setAiMode] = useState(false);
+  const [aiCount, setAiCount] = useState(10);
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiChannel, setAiChannel] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -59,6 +67,44 @@ export default function CommentTemplatesPage() {
     setBulkMode(false);
   };
 
+  const generateAI = async () => {
+    if (aiBusy) return;
+    const count = Math.max(1, Math.min(50, aiCount));
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const res = await backendFetch('/api/comments/ai-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          count,
+          topic: aiTopic.trim() || 'general YouTube video',
+          channel: aiChannel.trim(),
+          category: newCategory,
+        }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || !data.success) {
+        const errMsg = (data.error as string) || 'AI generation failed';
+        setAiError(errMsg);
+        return;
+      }
+      const newTemplates = (data.templates as CommentTemplate[]) || [];
+      if (newTemplates.length === 0) {
+        setAiError('AI returned no usable comments — try again or change topic');
+        return;
+      }
+      setTemplates(prev => [...prev, ...newTemplates]);
+      setAiTopic('');
+      setAiChannel('');
+      setAiMode(false);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Network error — backend reachable?');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const deleteTemplate = (id: string) => setTemplates(prev => prev.filter(t => t.id !== id));
 
   const getRandomComment = () => {
@@ -84,7 +130,11 @@ export default function CommentTemplatesPage() {
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-green-600/20 border border-green-600/30 text-green-400 hover:bg-green-600/30 transition-all text-sm font-medium">
               <Shuffle size={15} /> Random Pick
             </button>
-            <button onClick={() => setBulkMode(!bulkMode)}
+            <button onClick={() => { setAiMode(v => !v); setBulkMode(false); }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600/20 border border-purple-600/30 text-purple-400 hover:bg-purple-600/30 transition-all text-sm font-medium">
+              <Sparkles size={15} /> AI Generate
+            </button>
+            <button onClick={() => { setBulkMode(v => !v); setAiMode(false); }}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600/20 border border-blue-600/30 text-blue-400 hover:bg-blue-600/30 transition-all text-sm font-medium">
               <Plus size={15} /> Bulk Add
             </button>
@@ -118,6 +168,58 @@ export default function CommentTemplatesPage() {
               className="bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all">Add</button>
           </div>
         </div>
+
+        {/* AI Generate */}
+        {aiMode && (
+          <div className="bg-gray-900 border border-purple-800/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={14} className="text-purple-400" />
+              <p className="text-xs text-purple-400 font-medium">AI Generate Comments (Claude)</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase tracking-wide block mb-1">How many?</label>
+                <input
+                  type="number" min={1} max={50} value={aiCount}
+                  onChange={(e) => setAiCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase tracking-wide block mb-1">Video topic</label>
+                <input
+                  type="text" value={aiTopic} placeholder="e.g. credit card tips, gaming, finance"
+                  onChange={(e) => setAiTopic(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 uppercase tracking-wide block mb-1">Channel (optional)</label>
+                <input
+                  type="text" value={aiChannel} placeholder="Channel name"
+                  onChange={(e) => setAiChannel(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => void generateAI()}
+                disabled={aiBusy}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              >
+                {aiBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {aiBusy ? 'Generating…' : `Generate ${aiCount} comments`}
+              </button>
+              <span className="text-[10px] text-gray-500">
+                Saves to category: <span className="text-purple-300">{newCategory}</span> · Powered by Claude
+              </span>
+            </div>
+            {aiError && (
+              <p className="text-xs text-red-400 mt-2 flex items-center gap-1.5">⚠ {aiError}</p>
+            )}
+          </div>
+        )}
 
         {/* Bulk Add */}
         {bulkMode && (

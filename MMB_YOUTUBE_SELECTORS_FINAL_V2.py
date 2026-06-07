@@ -149,17 +149,61 @@ DESKTOP = {
         '.ytp-ad-player-overlay',
     ),
     "ad_skip_button": (
-        # ⭐ Skip button — try in order
-        'button.ytp-skip-ad-button',                               # Modern
-        '.ytp-skip-ad-button',
+        # ═══ RESEARCH 2024-2026 — try top → bottom (StackOverflow, Tampermonkey, DOM inspect) ═══
+        # ── Tier 1: Modern class names (most common live) ──
+        'button.ytp-ad-skip-button-modern',                      # ⭐ #1 cited 2025
         '.ytp-ad-skip-button-modern',
+        'button.ytp-skip-ad-button',
+        '.ytp-skip-ad-button',
+        'button.ytp-ad-skip-button',
         '.ytp-ad-skip-button',
-        'button[id^="skip-button"]',                               # ID prefix
+        # ── Tier 2: Dynamic IDs (YouTube injects per ad — colon suffix) ──
+        'button[id^="skip-button"]',                             # skip-button:3, skip-button:abc
         '#skip-button',
-        '.ytp-skip-ad button',
+        'div[id^="skip-ad"] button',                             # skip-ad:7 container
+        'div[id^="skip-ad"]',
+        'span[id^="skip-button"]',                               # rare text wrapper
+        # ── Tier 3: Overlay layout (post-2024 player) ──
         '.ytp-ad-player-overlay-layout__skip-or-preview-container button',
-        'button[aria-label*="Skip Ad" i]',                         # ARIA fallback
+        '.ytp-ad-player-overlay-layout__skip-or-preview-container',
+        '.ytp-ad-player-overlay-layout button',
+        '.ytp-ad-player-overlay button',
+        # ── Tier 4: Container / nested ──
+        '.ytp-skip-ad button',
+        '.ytp-skip-ad',
+        '.ytp-skip-ad-container button',
+        '.ytp-skip-ad-container',
+        '.ytp-ad-skip-button-slot button',
+        '.ytp-ad-skip-button-slot',
+        # ── Tier 5: Wildcard class (UI A/B tests change exact name) ──
+        '[class*="skip-ad-button"]',
+        '[class*="skip-button"]',
+        'button[class*="skip-ad"]',
+        'button[class*="skip-button"]',
+        'div[class*="skip-ad"] button',
+        '.video-ads [class*="skip"]',
+        '.ytp-ad-module [class*="skip"]',
+        # ── Tier 6: ARIA / WCAG (stable 5-10 years) ──
+        'button[aria-label^="Skip ad" i]',
+        'button[aria-label^="Skip Ad" i]',
+        'button[aria-label*="Skip ad" i]',
+        'button[aria-label*="Skip Ad" i]',
         'button[aria-label*="Skip" i]',
+        # ── Tier 7: Inner text node — click parent via JS ──
+        '.ytp-skip-ad-button__text',
+        '.ytp-ad-skip-button-modern__text',
+        '.ytp-skip-ad-button__text',
+        # ── Tier 8: Legacy / fallback ──
+        '.ytp-ad-skip-button-container button',
+        'button.ytp-button.ytp-ad-skip-button',
+    ),
+    # Dynamic ID prefix patterns — YouTube appends :hash after colon (not full IDs)
+    "ad_skip_id_patterns": (
+        'skip-button',       # → skip-button:3, skip-button:abc
+        'skip-ad',           # → skip-ad:7
+    ),
+    "ad_cta_id_patterns": (
+        'ad-button',         # CTA "Visit site" — NOT skip, do not click for skip
     ),
     "ad_skip_text": (
         '.ytp-skip-ad-button__text',                               # "Skip" text
@@ -234,8 +278,14 @@ DESKTOP = {
         '.html5-video-player.ad-showing',
         '.html5-video-player.ad-interrupting',
         '.html5-video-player.ad-created',
+        '#movie_player.ad-showing',
+        '#movie_player.ad-interrupting',
         '.video-ads .ytp-ad-player-overlay-layout',
         '.video-ads .ytp-ad-module',
+        '.ytp-ad-module',
+        '.ytp-ad-simple-ad-badge',
+        '.ytp-ad-duration-remaining',
+        '.ytp-ad-preview-text',
     ),
 
     # ════════════════════════════════════════════════════════════════════════
@@ -412,6 +462,23 @@ DESKTOP = {
     ),
     "settings_menu_content": (
         '.ytp-menuitem-content',                          # Right side value
+    ),
+    "quality_menu_item": (
+        # Settings gear → "Quality" row (click to open submenu)
+        '.ytp-menuitem[role="menuitem"] .ytp-menuitem-label',
+        '.ytp-menuitem:has(.ytp-menuitem-label)',
+    ),
+    "quality_submenu_radio": (
+        # 144p / 240p / 360p / 480p / 720p / 1080p / Auto
+        '.ytp-menuitem[role="menuitemradio"]',
+        '.ytp-quality-menu .ytp-menuitem',
+        '.ytp-panel-menu .ytp-menuitem[role="menuitemradio"]',
+    ),
+    "playback_speed_menu_item": (
+        '.ytp-menuitem[role="menuitem"] .ytp-menuitem-label',
+    ),
+    "playback_speed_submenu_radio": (
+        '.ytp-menuitem[role="menuitemradio"]',
     ),
     "cinema_theater_button": (
         # ⭐ Cinema/Theater mode — keyboard 't'
@@ -718,6 +785,18 @@ DESKTOP = {
         # After clicking bell — dropdown with All/Personalised/None
         'tp-yt-paper-item[role="menuitem"]',
         'ytd-menu-service-item-renderer',
+    ),
+    "bell_all_notifications_option": (
+        'tp-yt-paper-item[role="menuitem"]:has-text("All")',
+        'ytd-menu-service-item-renderer:has-text("All")',
+        'tp-yt-paper-item[role="menuitem"]',
+    ),
+    "bell_personalized_option": (
+        'tp-yt-paper-item[role="menuitem"]:has-text("Personalised")',
+        'tp-yt-paper-item[role="menuitem"]:has-text("Personalized")',
+    ),
+    "bell_none_option": (
+        'tp-yt-paper-item[role="menuitem"]:has-text("None")',
     ),
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1127,6 +1206,24 @@ DESKTOP = {
     ),
 
     # ════════════════════════════════════════════════════════════════════════
+    # SECTION 21b: SEARCH RESULTS PAGE
+    # ════════════════════════════════════════════════════════════════════════
+
+    "search_results_video": (
+        'ytd-video-renderer',
+        'ytd-item-section-renderer ytd-video-renderer',
+        '#contents ytd-video-renderer',
+        'ytd-section-list-renderer ytd-video-renderer',
+        'ytd-search ytd-video-renderer',
+        'ytm-video-with-metadata-renderer',
+    ),
+    "search_results_container": (
+        'ytd-search',
+        'ytd-two-column-search-results-renderer',
+        '#contents.ytd-section-list-renderer',
+    ),
+
+    # ════════════════════════════════════════════════════════════════════════
     # SECTION 22: TOP MASTHEAD (Logo, Guide, Create, Notifications, Avatar)
     # ════════════════════════════════════════════════════════════════════════
 
@@ -1173,6 +1270,9 @@ DESKTOP = {
         'button#avatar-btn',
         'button[aria-label="Account menu"]',
         'ytd-topbar-menu-button-renderer button#avatar-btn',
+        'img.yt-spec-avatar-shape__avatar',
+        'yt-img-shadow.yt-spec-avatar-shape',
+        'ytd-topbar-menu-button-renderer yt-img-shadow',
     ),
     "country_code_text": (
         '#country-code',                              # "IN", "US" etc (usually hidden)
@@ -1261,9 +1361,15 @@ MOBILE = {
     "play_button": ('button[aria-label*="Play" i]', '.ytp-play-button'),
     "pause_button": ('button[aria-label*="Pause" i]', '.ytp-play-button[aria-label*="Pause" i]'),
     "ad_skip_button": (
+        'button.ytp-ad-skip-button-modern',
         '.ytp-ad-skip-button-modern',
+        'button.ytp-skip-ad-button',
         '.ytp-skip-ad-button',
+        'button[id^="skip-button"]',
+        'div[id^="skip-ad"] button',
+        'button[aria-label^="Skip ad" i]',
         'button[aria-label*="Skip Ad" i]',
+        '[class*="skip-ad-button"]',
     ),
     "like_button": (
         'ytm-like-button-renderer button',
@@ -1377,7 +1483,58 @@ JS_API = {
     "is_ad_class_check": "document.querySelector('.html5-video-player')?.classList.contains('ad-showing')",
     "is_ad_overlay_check": "!!document.querySelector('.video-ads .ytp-ad-player-overlay-layout')",
     "is_ad_module_check": "!!document.querySelector('.video-ads .ytp-ad-module')",
-    "can_skip_ad": "!!document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button-modern, button[id^=\"skip-button\"]')",
+    "can_skip_ad": "!!document.querySelector('button.ytp-ad-skip-button-modern, .ytp-ad-skip-button-modern, button.ytp-skip-ad-button, .ytp-skip-ad-button, button.ytp-ad-skip-button, .ytp-ad-skip-button, button[id^=\"skip-button\"], #skip-button, div[id^=\"skip-ad\"] button, div[id^=\"skip-ad\"], .ytp-ad-player-overlay-layout__skip-or-preview-container button, .ytp-skip-ad button, [class*=\"skip-ad-button\"], [class*=\"skip-button\"], button[aria-label*=\"Skip\" i]')",
+    "is_ad_combined": "!!(document.querySelector('.html5-video-player.ad-showing, .html5-video-player.ad-interrupting, #movie_player.ad-showing, .video-ads .ytp-ad-player-overlay-layout, .ytp-ad-module, .ytp-ad-duration-remaining'))",
+    "dump_ad_skip_dom": """
+        (() => {
+            var out = { adShowing: false, skipCandidates: [], countdown: null, playerApi: false };
+            var p = document.querySelector('#movie_player, .html5-video-player');
+            if (p) {
+                out.adShowing = p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting');
+                out.playerApi = typeof p.skipAd === 'function';
+            }
+            var cd = document.querySelector('.ytp-ad-duration-remaining, .ytp-ad-preview-text, .ytp-ad-simple-ad-badge');
+            if (cd) out.countdown = (cd.innerText || cd.textContent || '').trim().substring(0, 40);
+            var sels = [
+                'button.ytp-ad-skip-button-modern', '.ytp-ad-skip-button-modern',
+                'button.ytp-skip-ad-button', '.ytp-skip-ad-button',
+                'button[id^="skip-button"]', 'div[id^="skip-ad"] button',
+                '[class*="skip-ad-button"]', 'button[aria-label*="Skip" i]'
+            ];
+            var seen = new Set();
+            for (var i = 0; i < sels.length; i++) {
+                document.querySelectorAll(sels[i]).forEach(function(el) {
+                    if (seen.has(el)) return;
+                    seen.add(el);
+                    var r = el.getBoundingClientRect();
+                    out.skipCandidates.push({
+                        sel: sels[i],
+                        id: el.id || '',
+                        className: (el.className || '').toString().substring(0, 80),
+                        aria: (el.getAttribute('aria-label') || '').substring(0, 40),
+                        text: (el.innerText || '').substring(0, 24),
+                        w: Math.round(r.width), h: Math.round(r.height),
+                        visible: el.offsetParent !== null && r.width > 0
+                    });
+                });
+            }
+            document.querySelectorAll('[id^="skip-button"], [id^="skip-ad"]').forEach(function(el) {
+                if (seen.has(el)) return;
+                seen.add(el);
+                var r = el.getBoundingClientRect();
+                out.skipCandidates.push({
+                    sel: 'id-scan',
+                    id: el.id,
+                    className: (el.className || '').toString().substring(0, 80),
+                    aria: (el.getAttribute('aria-label') || '').substring(0, 40),
+                    text: (el.innerText || '').substring(0, 24),
+                    w: Math.round(r.width), h: Math.round(r.height),
+                    visible: el.offsetParent !== null && r.width > 0
+                });
+            });
+            return out;
+        })()
+    """,
 
     # ─── YouTube Player API (#movie_player) ──────────────────────────────────
     "get_video_data": "document.querySelector('#movie_player').getVideoData()",
@@ -1479,7 +1636,186 @@ JS_API = {
     # ─── NEW (V2): Like/Dislike state ────────────────────────────────────────
     "is_liked": "document.querySelector('like-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
     "is_disliked": "document.querySelector('dislike-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
+
+    # ─── 14-action state checks ─────────────────────────────────────────────
+    "autoplay_is_on": "document.querySelector('.ytp-autonav-toggle-button')?.getAttribute('aria-checked') === 'true'",
+    "captions_are_on": "document.querySelector('.ytp-subtitles-button')?.getAttribute('aria-pressed') === 'true'",
+    "volume_pct": "Math.round((document.querySelector('video')?.volume ?? 1) * 100)",
+    "seek_forward_keys": "document.querySelector('video').currentTime += 10",
+    "seek_backward_keys": "document.querySelector('video').currentTime -= 10",
+    "set_playback_quality": "quality => document.querySelector('#movie_player')?.setPlaybackQuality(quality)",
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 🎯 14 ENGAGEMENT ACTIONS — Engine master map (02_video_watching_engine.md)
+# Har action → V2 DESKTOP keys + JS verify + engine file
+# ════════════════════════════════════════════════════════════════════════════
+
+FOURTEEN_ACTIONS: dict[str, dict] = {
+    "like": {
+        "label": "Like",
+        "ui_setting": "like",
+        "click_keys": ("like_button",),
+        "state_keys": ("like_already_pressed",),
+        "js_state": "is_liked",
+        "keyboard": "none",
+        "engine": "agent_manager._do_like → desktop.like",
+        "verify_log": "Liked ✓ VERIFIED",
+    },
+    "dislike": {
+        "label": "Dislike",
+        "ui_setting": "dislike",
+        "click_keys": ("dislike_button",),
+        "state_keys": ("dislike_already_pressed",),
+        "js_state": "is_disliked",
+        "keyboard": "none",
+        "engine": "agent_manager._do_dislike → desktop.dislike",
+        "verify_log": "Disliked ✓",
+    },
+    "subscribe": {
+        "label": "Subscribe",
+        "ui_setting": "subscribe",
+        "click_keys": ("subscribe_button",),
+        "state_keys": ("subscribed_state_marker", "bell_notification_button"),
+        "js_state": "is_subscribed",
+        "keyboard": "none",
+        "engine": "agent_manager._do_subscribe → desktop.subscribe",
+        "verify_log": "Subscribed ✓",
+    },
+    "bell": {
+        "label": "Bell notification",
+        "ui_setting": "bell",
+        "click_keys": ("bell_notification_button", "bell_all_notifications_option"),
+        "state_keys": ("bell_menu_items_dropdown",),
+        "js_state": "is_subscribed",
+        "keyboard": "none",
+        "engine": "agent_manager._do_bell → desktop.toggle_bell / set_bell_level",
+        "verify_log": "Bell notification ON ✓",
+    },
+    "comment": {
+        "label": "Comment post",
+        "ui_setting": "comment",
+        "click_keys": (
+            "comment_input_placeholder_click",
+            "comment_input_active_typing",
+            "comment_submit_button",
+        ),
+        "state_keys": ("comments_section", "comment_thread"),
+        "js_state": None,
+        "keyboard": "human_type",
+        "engine": "agent_manager._do_comment → desktop.post_comment",
+        "verify_log": "[Comment] VERIFIED",
+    },
+    "comment_like": {
+        "label": "Comment like",
+        "ui_setting": "commentLikePct",
+        "click_keys": ("comment_like_button",),
+        "state_keys": ("comment_item_view", "comment_thread"),
+        "js_state": None,
+        "keyboard": "none",
+        "engine": "agent_manager._do_like_comment → desktop.like_comment_first",
+        "verify_log": "Comment liked ✓",
+    },
+    "description_expand": {
+        "label": "Description expand",
+        "ui_setting": "descriptionExpand",
+        "click_keys": ("description_more_button",),
+        "state_keys": ("description_text_expanded", "description_less_button"),
+        "js_state": None,
+        "keyboard": "none",
+        "engine": "agent_manager._do_expand_description → desktop.expand_description",
+        "verify_log": "Description expanded ✓ VERIFIED",
+    },
+    "play_pause": {
+        "label": "Play / Pause",
+        "ui_setting": "pauseProbability / pauseHoldSec",
+        "click_keys": ("play_button", "pause_button"),
+        "state_keys": ("player_state_classes",),
+        "js_state": "is_paused",
+        "keyboard": "k",
+        "engine": "PlayPauseLimiter + desktop.pause/play OR video.pause()/play()",
+        "verify_log": "Resume after pause VERIFIED",
+    },
+    "volume": {
+        "label": "Volume adjust",
+        "ui_setting": "volumePct",
+        "click_keys": ("mute_button", "volume_panel", "volume_area"),
+        "state_keys": ("volume_panel",),
+        "js_state": "volume_pct",
+        "keyboard": "m / arrow keys",
+        "engine": "agent_manager._do_volume_adjust → desktop.set_volume",
+        "verify_log": "Volume OK",
+    },
+    "captions": {
+        "label": "Captions toggle",
+        "ui_setting": "captionsToggle",
+        "click_keys": ("captions_subtitles_button", "captions_window"),
+        "state_keys": ("captions_window",),
+        "js_state": "captions_are_on",
+        "keyboard": "c",
+        "engine": "desktop.toggle_captions",
+        "verify_log": "[Captions] OK ✓",
+    },
+    "seek": {
+        "label": "Seek forward/back",
+        "ui_setting": "seekEnabled",
+        "click_keys": ("progress_bar_slider", "scrubber_button_circle"),
+        "state_keys": ("play_progress_red_bar",),
+        "js_state": "current_time",
+        "keyboard": "j / l / arrow keys",
+        "engine": "agent_manager._do_seek → desktop.seek OR video.currentTime",
+        "verify_log": "Seek ✓ VERIFIED",
+    },
+    "quality": {
+        "label": "Quality change",
+        "ui_setting": "videoQuality / qualityChange",
+        "click_keys": (
+            "settings_gear_button",
+            "settings_menu_popup",
+            "quality_menu_item",
+            "quality_submenu_radio",
+        ),
+        "state_keys": ("settings_menu_content",),
+        "js_state": "get_current_quality",
+        "keyboard": "none",
+        "engine": "agent_manager._do_quality_change → quality.change_quality",
+        "verify_log": "Quality changed ✓",
+    },
+    "ad_skip": {
+        "label": "Ad skip",
+        "ui_setting": "adSkipEnabled / adSkipDelaySec",
+        "click_keys": ("ad_skip_button",),
+        "state_keys": ("ad_detection_combined", "ad_module"),
+        "js_state": "can_skip_ad",
+        "keyboard": "none",
+        "engine": "ad_skip_engine.skip_ads_until_clear",
+        "verify_log": "✓ SKIP VERIFIED",
+    },
+    "autoplay_off": {
+        "label": "Autoplay OFF",
+        "ui_setting": "hard rule (always)",
+        "click_keys": ("autoplay_toggle_button", "autoplay_state_container"),
+        "state_keys": ("autoplay_state_container",),
+        "js_state": "autoplay_is_on",
+        "keyboard": "none",
+        "engine": "desktop.disable_autoplay + verify_autoplay_off",
+        "verify_log": "Autoplay OFF OK",
+    },
+}
+
+
+def fourteen_action_selector_counts() -> dict[str, int]:
+    """Return total CSS selectors wired per 14-action (for audit/tests)."""
+    out: dict[str, int] = {}
+    for key, spec in FOURTEEN_ACTIONS.items():
+        n = 0
+        for k in spec.get("click_keys", ()):
+            v = DESKTOP.get(k)
+            if isinstance(v, tuple):
+                n += len(v)
+        out[key] = n
+    return out
 
 
 # ════════════════════════════════════════════════════════════════════════════

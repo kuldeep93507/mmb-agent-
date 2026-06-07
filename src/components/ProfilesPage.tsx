@@ -265,7 +265,7 @@ interface ProfilesPageProps {
   loading?: boolean;
   recreatingIds?: Set<string>;
 
-  onCreateProfile: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string) => Promise<{ code: number; message?: string }>;
+  onCreateProfile: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string) => Promise<{ code: number; message?: string }>;
   onStartProfile: (id: string) => void;
   onStopProfile: (id: string) => void;
   onDeleteProfile: (id: string) => void;
@@ -682,18 +682,6 @@ export default function ProfilesPage({
 
         {viewMode === 'active' && (
         <>
-        {/* Coming Soon — fixed channels shortcut (#11) */}
-        <div className="mb-4 rounded-xl border border-amber-700/40 bg-amber-950/30 px-4 py-3 flex items-start gap-3">
-          <Clock size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-amber-200 text-sm font-medium">Coming Soon — Run fixed channels from Profiles</p>
-            <p className="text-amber-200/70 text-xs mt-1 leading-relaxed">
-              Ek click se selected profiles par tumhare 2 built-in YouTube channels ki videos chalana.
-              Abhi ke liye <span className="text-amber-100">Scheduler</span> ya <span className="text-amber-100">Video Shuffle</span> use karo.
-            </p>
-          </div>
-        </div>
-
         {arrangeError && (
           <div className="mb-3 rounded-xl border border-red-700/40 bg-red-900/20 px-3 py-2 text-xs text-red-300 flex justify-between gap-2">
             <span>{arrangeError}</span>

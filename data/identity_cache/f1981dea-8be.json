@@ -1,0 +1,18 @@
+{
+  "profile_id": "f1981dea-8be2-4a25-aef7-862f06771acd",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Hillsboro",
+  "timezone": "America/Los_Angeles",
+  "lat": 45.4998,
+  "lon": -122.9586,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 2686240953,
+  "canvas_noise": 0.004176,
+  "webgl_noise": 0.004323,
+  "audio_noise": 1.741e-05,
+  "cached_at": 1780629781.9272401
+}

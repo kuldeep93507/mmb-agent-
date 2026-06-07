@@ -1,0 +1,18 @@
+{
+  "profile_id": "90d35a6d-c87b-44ad-9416-e01207b65830",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Dickinson",
+  "timezone": "America/Chicago",
+  "lat": 29.4608,
+  "lon": -95.0513,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1755218712,
+  "canvas_noise": 0.004017,
+  "webgl_noise": 0.001235,
+  "audio_noise": 6.083e-05,
+  "cached_at": 1780672058.6202738
+}

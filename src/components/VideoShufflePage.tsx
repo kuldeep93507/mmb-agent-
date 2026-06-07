@@ -192,6 +192,21 @@ const SHUFFLE_SETTINGS_KEY = 'mmb_shuffle_settings';
 type AssignmentMode = 'unique' | 'same-all';
 type ShuffleVideoQuality = '144p' | '240p' | '360p' | '480p' | '720p' | '1080p' | 'auto';
 const QUALITY_OPTIONS: ShuffleVideoQuality[] = ['auto', '144p', '240p', '360p', '480p', '720p', '1080p'];
+
+/** Per-profile overrides — agar set hai to global setting override hogi, warna global use hogi */
+interface PerProfileOverride {
+  quality?: ShuffleVideoQuality;
+  watchTimeMin?: number;   // exact % min
+  watchTimeMax?: number;   // exact % max
+  volumePct?: number;
+  seekEnabled?: boolean;
+  adSkip?: boolean;
+  captions?: boolean;
+  like?: boolean;
+  subscribe?: boolean;
+  bell?: boolean;
+  comment?: boolean;
+}
 type PlaybackSpeed = '0.75x' | '1x' | '1.25x' | '1.5x' | '1.75x' | '2x';
 const SPEED_OPTIONS: PlaybackSpeed[] = ['0.75x', '1x', '1.25x', '1.5x', '1.75x', '2x'];
 type TrafficSource = 'direct' | 'search' | 'suggested';
@@ -429,6 +444,8 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState<{ limit: number; running: number; available: number } | null>(null);
   const [detailProfile, setDetailProfile] = useState<string | null>(null);
+  const [perProfileOverrides, setPerProfileOverrides] = useState<Record<string, PerProfileOverride>>({});
+  const [showPerProfilePanel, setShowPerProfilePanel] = useState(false);
   const [poolExhaustedNotice, setPoolExhaustedNotice] = useState<string[]>([]);
   const [runStatus, setRunStatus] = useState<{ type: 'info' | 'warn' | 'error' | 'success'; text: string } | null>(null);
   const [profileSearch, setProfileSearch] = useState('');
@@ -1142,40 +1159,48 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
 
   const buildSchedulePayload = (profilesToRun: ProfileAssignment[], scheduleId: string, name: string) => {
     const { watchTimeMin, watchTimeMax } = clampWatchRange(settings.watchTimeMin, settings.watchTimeMax);
-    const profileConfigs = profileConfigsForSchedule(profilesToRun.map(a => a.profileId), profiles).map(cfg => ({
-      ...cfg,
-      watchTimeMin,
-      watchTimeMax,
-      videoQuality: settings.videoQuality,
-      adSkipEnabled: settings.adSkipEnabled,
-      adSkipAfterSec: settings.adSkipAfterSec,
-      midRollAdWaitSec: settings.midRollAdWaitSec,
-      humanEngagementEnabled: true,
-      seekForwardMax: 2,
-      seekForwardSec: 10,
-      // Human behaviour settings
-      volumePct: settings.volumePct,
-      seekEnabled: settings.seekEnabled,
-      seekDirection: settings.seekDirection,
-      descriptionExpand: settings.descriptionExpand,
-      descriptionLinks: settings.descriptionLinks,
-      pauseProbability: settings.pauseProbability / 100,
-      uniqueTypingPersonality: settings.uniqueTypingPersonality,
-      naturalScrollCurves: settings.naturalScrollCurves,
-      likeEnabled: settings.actionToggles.like,
-      subscribeEnabled: settings.actionToggles.subscribe,
-      bellEnabled: settings.actionToggles.bell,
-      commentEnabled: settings.actionToggles.comment,
-      scrollActivity: settings.actionToggles.scroll,
-      qualityChange: settings.actionToggles.qualityChange,
-      qualityChangeEnabled: settings.actionToggles.qualityChange,
-      captionsToggle: settings.actionToggles.captionsToggle,
-      captionsEnabled: settings.captionsEnabled,
-      speedChange: settings.playbackSpeed !== '1x',
-      speedChangeEnabled: settings.playbackSpeed !== '1x',
-      playbackSpeed: settings.playbackSpeed,
-      trafficSource: settings.trafficSource,
-    }));
+    const profileConfigs = profileConfigsForSchedule(profilesToRun.map(a => a.profileId), profiles).map(cfg => {
+      // Per-profile overrides — agar koi override set hai to wahi use hoga, warna global
+      const pov: PerProfileOverride = perProfileOverrides[cfg.profileId as string] || {};
+      const pWatchMin = pov.watchTimeMin ?? watchTimeMin;
+      const pWatchMax = pov.watchTimeMax ?? watchTimeMax;
+      return {
+        ...cfg,
+        watchTimeMin: pWatchMin,
+        watchTimeMax: Math.max(pWatchMin, pWatchMax),
+        videoQuality: pov.quality ?? settings.videoQuality,
+        adSkipEnabled: pov.adSkip ?? settings.adSkipEnabled,
+        adSkipAfterSec: settings.adSkipAfterSec,
+        adSkipDelaySec: settings.adSkipAfterSec,
+        adSkipDelayMaxSec: Math.min(120, settings.adSkipAfterSec + 5),
+        midRollAdWaitSec: settings.midRollAdWaitSec,
+        humanEngagementEnabled: true,
+        seekForwardMax: 2,
+        seekForwardSec: 10,
+        // Human behaviour settings
+        volumePct: pov.volumePct ?? settings.volumePct,
+        seekEnabled: pov.seekEnabled ?? settings.seekEnabled,
+        seekDirection: settings.seekDirection,
+        descriptionExpand: settings.descriptionExpand,
+        descriptionLinks: settings.descriptionLinks,
+        pauseProbability: settings.pauseProbability / 100,
+        uniqueTypingPersonality: settings.uniqueTypingPersonality,
+        naturalScrollCurves: settings.naturalScrollCurves,
+        likeEnabled: pov.like ?? settings.actionToggles.like,
+        subscribeEnabled: pov.subscribe ?? settings.actionToggles.subscribe,
+        bellEnabled: pov.bell ?? settings.actionToggles.bell,
+        commentEnabled: pov.comment ?? settings.actionToggles.comment,
+        scrollActivity: settings.actionToggles.scroll,
+        qualityChange: settings.actionToggles.qualityChange,
+        qualityChangeEnabled: settings.actionToggles.qualityChange,
+        captionsToggle: pov.captions !== undefined ? true : settings.actionToggles.captionsToggle,
+        captionsEnabled: pov.captions ?? settings.captionsEnabled,
+        speedChange: settings.playbackSpeed !== '1x',
+        speedChangeEnabled: settings.playbackSpeed !== '1x',
+        playbackSpeed: settings.playbackSpeed,
+        trafficSource: settings.trafficSource,
+      };
+    });
 
     const sameForAll = settings.assignmentMode === 'same-all' && profilesToRun[0]
       ? channelConfigs.map(config => ({
@@ -2416,6 +2441,194 @@ export default function VideoShufflePage({ profiles, channels, getVideos, onRefr
             </div>
           )}
         </div>
+
+        {/* ── Per-Profile Overrides Panel ── */}
+        {assignments.length > 0 && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setShowPerProfilePanel(p => !p)}
+              className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 font-medium transition-all mb-2"
+            >
+              <span>{showPerProfilePanel ? '▼' : '▶'}</span>
+              Per-Profile Overrides
+              <span className="text-xs text-gray-500 font-normal">(quality, watch%, volume, actions — global ko override karo)</span>
+            </button>
+
+            {showPerProfilePanel && (
+              <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-700 text-gray-400">
+                      <th className="text-left px-3 py-2 font-medium">Profile</th>
+                      <th className="px-2 py-2 font-medium">🎬 Quality</th>
+                      <th className="px-2 py-2 font-medium">⏱ Watch%</th>
+                      <th className="px-2 py-2 font-medium">🔊 Vol%</th>
+                      <th className="px-2 py-2 font-medium">👍 Like</th>
+                      <th className="px-2 py-2 font-medium">🔔 Sub</th>
+                      <th className="px-2 py-2 font-medium">🔔 Bell</th>
+                      <th className="px-2 py-2 font-medium">💬 Cmt</th>
+                      <th className="px-2 py-2 font-medium">⏭ Seek</th>
+                      <th className="px-2 py-2 font-medium">🚫 AdSkip</th>
+                      <th className="px-2 py-2 font-medium">📝 CC</th>
+                      <th className="px-2 py-2 font-medium">Reset</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignments.map(a => {
+                      const profile = profiles.find(p => p.id === a.profileId);
+                      const pov = perProfileOverrides[a.profileId] || {};
+                      const setField = <K extends keyof PerProfileOverride>(field: K, val: PerProfileOverride[K] | undefined) => {
+                        setPerProfileOverrides(prev => {
+                          const cur = prev[a.profileId] || {};
+                          const next = { ...cur };
+                          if (val === undefined) delete next[field];
+                          else (next as Record<string, unknown>)[field] = val;
+                          return { ...prev, [a.profileId]: next };
+                        });
+                      };
+                      const hasAnyOverride = Object.keys(pov).length > 0;
+                      return (
+                        <tr key={a.profileId} className={`border-b border-gray-800 ${hasAnyOverride ? 'bg-purple-900/10' : ''}`}>
+                          {/* Profile Name */}
+                          <td className="px-3 py-1.5 text-white font-medium truncate max-w-[100px]">
+                            {profile?.name || a.profileName}
+                            {hasAnyOverride && <span className="ml-1 text-purple-400">*</span>}
+                          </td>
+                          {/* Quality */}
+                          <td className="px-2 py-1.5">
+                            <select
+                              value={pov.quality ?? ''}
+                              onChange={e => setField('quality', e.target.value ? (e.target.value as ShuffleVideoQuality) : undefined)}
+                              className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5 text-xs focus:border-purple-500 outline-none"
+                            >
+                              <option value="">— global —</option>
+                              {QUALITY_OPTIONS.map(q => <option key={q} value={q}>{q}</option>)}
+                            </select>
+                          </td>
+                          {/* Watch % range */}
+                          <td className="px-2 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={1} max={100}
+                                placeholder={String(settings.watchTimeMin)}
+                                value={pov.watchTimeMin ?? ''}
+                                onChange={e => setField('watchTimeMin', e.target.value ? Number(e.target.value) : undefined)}
+                                className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5 text-xs w-12 focus:border-purple-500 outline-none"
+                              />
+                              <span className="text-gray-600">–</span>
+                              <input
+                                type="number"
+                                min={1} max={100}
+                                placeholder={String(settings.watchTimeMax)}
+                                value={pov.watchTimeMax ?? ''}
+                                onChange={e => setField('watchTimeMax', e.target.value ? Number(e.target.value) : undefined)}
+                                className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5 text-xs w-12 focus:border-purple-500 outline-none"
+                              />
+                            </div>
+                          </td>
+                          {/* Volume */}
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              min={0} max={100}
+                              placeholder={String(settings.volumePct)}
+                              value={pov.volumePct ?? ''}
+                              onChange={e => setField('volumePct', e.target.value ? Number(e.target.value) : undefined)}
+                              className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5 text-xs w-14 focus:border-purple-500 outline-none"
+                            />
+                          </td>
+                          {/* Like */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.like ?? settings.actionToggles.like}
+                              onChange={e => setField('like', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Subscribe */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.subscribe ?? settings.actionToggles.subscribe}
+                              onChange={e => setField('subscribe', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Bell */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.bell ?? settings.actionToggles.bell}
+                              onChange={e => setField('bell', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Comment */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.comment ?? settings.actionToggles.comment}
+                              onChange={e => setField('comment', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Seek */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.seekEnabled ?? settings.seekEnabled}
+                              onChange={e => setField('seekEnabled', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* AdSkip */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.adSkip ?? settings.adSkipEnabled}
+                              onChange={e => setField('adSkip', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Captions */}
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={pov.captions ?? settings.captionsEnabled}
+                              onChange={e => setField('captions', e.target.checked)}
+                              className="accent-purple-500 w-3.5 h-3.5"
+                            />
+                          </td>
+                          {/* Reset */}
+                          <td className="px-2 py-1.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setPerProfileOverrides(prev => { const n = { ...prev }; delete n[a.profileId]; return n; })}
+                              disabled={!hasAnyOverride}
+                              className="text-gray-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-xs"
+                              title="Reset to global"
+                            >↺</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="px-3 py-2 border-t border-gray-800 flex items-center justify-between">
+                  <p className="text-xs text-gray-600">* = global se alag; blank = global value use hogi</p>
+                  <button
+                    type="button"
+                    onClick={() => setPerProfileOverrides({})}
+                    className="text-xs text-gray-500 hover:text-red-400 transition-all"
+                  >Reset All</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Detail Modal */}

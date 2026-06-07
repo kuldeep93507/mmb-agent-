@@ -1,0 +1,18 @@
+{
+  "profile_id": "78c13789-5232-4501-b8a7-f43bf3abfe0a",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Valdez",
+  "timezone": "America/Anchorage",
+  "lat": 61.1309,
+  "lon": -146.35,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1440,
+  "screen_height": 900,
+  "noise_seed": 2422562322,
+  "canvas_noise": 0.004442,
+  "webgl_noise": 0.004857,
+  "audio_noise": 9.314e-05,
+  "cached_at": 1780580596.7096176
+}

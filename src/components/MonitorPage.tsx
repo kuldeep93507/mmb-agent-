@@ -290,6 +290,11 @@ export default function MonitorPage({
                     <div style={{ fontWeight: 600, color: 'var(--mmb-text)' }}>{job.profileName || job.profileId.slice(0, 12)}</div>
                     <div style={{ color: 'var(--mmb-muted)', fontSize: 11 }}>
                       {job.videosOk ?? 0}/{job.videoCount ?? '?'} videos · {job.status}
+                      {job.log?.length ? (
+                        <span style={{ display: 'block', marginTop: 4, color: 'var(--mmb-text)', opacity: 0.85 }}>
+                          {job.log[job.log.length - 1]?.msg?.slice(0, 120)}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -307,6 +312,7 @@ export default function MonitorPage({
           onStartRecycle={onStartRecycle as (() => Promise<void>) | undefined}
           canStartRecycle={canStartRecycle}
           onRefreshProfiles={onRefreshProfiles}
+          engagementJobs={engStatus?.jobs || []}
           runLabel="Live Monitor"
         />
       </div>

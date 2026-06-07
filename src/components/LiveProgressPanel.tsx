@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Activity, Loader, CheckCircle, XCircle, Clock, Tv, Square, LayoutGrid, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { backendFetch } from '../services/backendOrigin';
 import type { Profile } from '../types';
+import type { EngagementJobSummary } from '../utils/dashboardApi';
 import {
   fetchRecycleStatus,
   stopRecycleLoop,
@@ -25,7 +26,7 @@ interface WorkerStatus {
 interface DisplayRow extends WorkerStatus {
   rowKey: string;
   displayName: string;
-  source: 'worker' | 'recycle';
+  source: 'worker' | 'recycle' | 'engagement';
   slotId?: string;
   recycleStatus?: string;
   cooldownUntil?: number | null;
@@ -63,6 +64,8 @@ interface LiveProgressPanelProps {
   refreshToken?: number;
   /** Show Refresh + Clear completed buttons (Live Monitor) */
   showMonitorActions?: boolean;
+  /** Active engagement jobs (shown alongside shuffle/schedule workers) */
+  engagementJobs?: EngagementJobSummary[];
 }
 
 const ACTIVE_WORKER_STATUSES = new Set([
@@ -92,6 +95,41 @@ function normalizeWorkerLogs(logs: unknown[]): { time: string; level: string; me
 }
 
 const RECYCLE_ACTIVE_STATUSES = new Set(['running', 'cooldown', 'recreating', 'queued', 'error']);
+
+const ENGAGEMENT_ACTIVE_STATUSES = new Set(['running', 'pending', 'partial']);
+
+function engagementJobToRow(job: EngagementJobSummary): DisplayRow {
+  const statusMap: Record<string, string> = {
+    running: 'watching',
+    pending: 'waiting',
+    partial: 'running',
+    done: 'done',
+    failed: 'error',
+    cancelled: 'stopped',
+  };
+  const logs = (job.log || []).map((entry) => {
+    const msg = entry.msg || '';
+    return {
+      time: entry.t || new Date().toISOString(),
+      level: /error|fail|✗|❌/i.test(msg) ? 'error' : /✓|success|done|✅/i.test(msg) ? 'success' : 'info',
+      message: msg,
+    };
+  });
+  const lastLog = logs[logs.length - 1];
+  return {
+    rowKey: `eng-${job.id}`,
+    profileId: job.profileId,
+    displayName: `${job.profileName || job.profileId.slice(0, 12)} · Engagement`,
+    status: statusMap[job.status] || job.status,
+    currentVideo: lastLog?.message ? lastLog.message.slice(0, 100) : null,
+    progress: `${job.videosOk ?? 0}/${job.videoCount ?? '?'}`,
+    retries: 0,
+    logs,
+    results: { watched: job.videosOk ?? 0, failed: job.videosFailed ?? 0, skipped: 0 },
+    uptime: job.startedAt ? Math.max(0, Date.now() - job.startedAt) : 0,
+    source: 'engagement',
+  };
+}
 
 function slotToRow(slot: RecycleSlotStatus): DisplayRow {
   const statusMap: Record<string, string> = {
@@ -139,6 +177,7 @@ export default function LiveProgressPanel({
   onRefreshProfiles,
   refreshToken = 0,
   showMonitorActions = false,
+  engagementJobs = [],
 }: LiveProgressPanelProps) {
   const [workers, setWorkers] = useState<WorkerStatus[]>([]);
   const [stats, setStats] = useState<WorkerStats>({ total: 0, running: 0, done: 0, error: 0, waiting: 0 });
@@ -256,8 +295,15 @@ export default function LiveProgressPanel({
       }
     }
 
+    const workerProfileIds = new Set(rows.map((r) => r.profileId).filter(Boolean));
+    for (const job of engagementJobs) {
+      if (!ENGAGEMENT_ACTIVE_STATUSES.has(job.status)) continue;
+      if (workerProfileIds.has(job.profileId)) continue;
+      rows.push(engagementJobToRow(job));
+    }
+
     return rows;
-  }, [workers, recycleStatus, profileName]);
+  }, [workers, recycleStatus, profileName, engagementJobs]);
 
   const visibleRows = useMemo(() => {
     if (!filterSet) return mergedRows;
@@ -280,6 +326,7 @@ export default function LiveProgressPanel({
   }, [stats, filterSet, visibleRows]);
 
   const recycleActive = !!(recycleStatus?.enabled && recycleStatus.slots.some((s) => s.enabled));
+  const engagementActive = engagementJobs.some((j) => ENGAGEMENT_ACTIVE_STATUSES.has(j.status));
 
   const stopWorker = async (profileId: string) => {
     try {
@@ -364,8 +411,8 @@ export default function LiveProgressPanel({
   const displayStats = filterSet ? visibleStats : stats;
   const displayRows = filterSet ? visibleRows : mergedRows;
   const displayActive = filterSet
-    ? (visibleStats.running > 0 || visibleStats.waiting > 0 || recycleActive)
-    : (isActive || recycleActive);
+    ? (visibleStats.running > 0 || visibleStats.waiting > 0 || recycleActive || engagementActive)
+    : (isActive || recycleActive || engagementActive);
 
   const loopBusy = recycleLoopBusy || loopBusyLocal;
 
@@ -373,7 +420,7 @@ export default function LiveProgressPanel({
     ? Math.round(((displayStats.done + displayStats.error) / displayStats.total) * 100)
     : 0;
 
-  const showPanel = displayActive || displayRows.length > 0 || recycleActive;
+  const showPanel = displayActive || displayRows.length > 0 || recycleActive || engagementActive;
 
   if (!showPanel) {
     if (hideWhenIdle) return null;
@@ -519,7 +566,7 @@ export default function LiveProgressPanel({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-white text-xs font-medium truncate">{w.displayName}</span>
                     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isRunning ? 'bg-green-900/50 text-green-400' : isCooldown ? 'bg-amber-900/50 text-amber-400' : isRecreating ? 'bg-purple-900/50 text-purple-400' : isDone ? 'bg-blue-900/50 text-blue-400' : isError ? 'bg-red-900/50 text-red-400' : 'bg-gray-700 text-gray-400'}`}>
-                      {w.recycleStatus ? recycleStatusLabel(w.recycleStatus) : w.status}
+                      {w.source === 'engagement' ? 'engagement' : w.recycleStatus ? recycleStatusLabel(w.recycleStatus) : w.status}
                     </span>
                     {typeof w.cycleCount === 'number' && w.cycleCount > 0 && (
                       <span className="text-[10px] text-gray-500">cycle #{w.cycleCount}</span>
@@ -571,7 +618,7 @@ export default function LiveProgressPanel({
               {isExpanded && (
                 <div className="px-3 pb-3 border-t border-gray-700/50 mt-1 pt-2">
                   <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                    {normalizeWorkerLogs(w.logs || []).slice(-10).map((log, i) => (
+                    {normalizeWorkerLogs(w.logs || []).slice(-25).map((log, i) => (
                       <div key={i} className="flex items-start gap-2 text-xs">
                         <span className="text-gray-600 flex-shrink-0 w-14">{new Date(log.time).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5 ${log.level === 'error' ? 'bg-red-500' : log.level === 'success' ? 'bg-green-500' : log.level === 'warn' ? 'bg-yellow-500' : 'bg-gray-500'}`} />

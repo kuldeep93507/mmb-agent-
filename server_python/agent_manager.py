@@ -1,4 +1,4 @@
-"""
+﻿"""
 AgentManager — Full v2-grade YouTube automation
 ================================================
 Includes all MMB-Agent-v2 features:
@@ -22,19 +22,20 @@ import random
 import time
 from typing import Any, Callable
 
-from behavior.youtube.entry_flow import accept_consent_if_present
-from behavior.youtube.play_pause_limiter import PlayPauseLimiter
-from behavior.youtube.scroll_activity import ScrollActivityPlanner
-from behavior.youtube.player_focus import focus_player
-from behavior.youtube.safe_actions import safe_eval_js
-from behavior.youtube.state import (
+from server_python.behavior.youtube.entry_flow import accept_consent_if_present
+from server_python.behavior.youtube.play_pause_limiter import PlayPauseLimiter
+from server_python.behavior.youtube.scroll_activity import ScrollActivityPlanner
+from server_python.behavior.youtube.player_focus import focus_player
+from server_python.behavior.youtube.safe_actions import safe_eval_js
+from server_python.behavior.youtube.state import (
     get_video_duration_when_ready,
+    is_ad_playing,
     is_disliked,
     is_liked,
     is_subscribed,
     get_volume_percent,
 )
-from behavior.youtube import desktop as yt_desktop
+from server_python.behavior.youtube import desktop as yt_desktop
 
 log = logging.getLogger("mmb.agent_manager")
 
@@ -64,6 +65,7 @@ class YouTubeAgent:
         self.tab         = None
         self._running    = False
         self._guardian   = None  # PlaybackGuardian
+        self._anti_sleep = None  # AntiSleepKeeper v2
         _profile_seed = int(hashlib.sha256(profile_id.encode()).hexdigest()[:16], 16)
         self._rng        = random.Random(_profile_seed)
         self._log_fn     = log_fn  # external log sink (e.g. job log)
@@ -117,9 +119,137 @@ class YouTubeAgent:
             self.tab = tabs[0] if tabs else await self.browser.get("about:blank")
             self._running = True
             self._log(f"nodriver attached to existing browser ✓ (port={self.cdp_port})")
+            from server_python.anti_sleep import AntiSleepKeeper
+            self._anti_sleep = AntiSleepKeeper(log_fn=self._log)
+            await self._anti_sleep.start(self.tab, self.browser)
         except Exception as e:
             self._log(f"CDP attach error: {e}")
             raise
+
+    async def _reconnect_tab(self) -> bool:
+        """
+        After a long ad / WebSocket drop, refresh our tab reference from the browser.
+        nodriver tabs have a websocket per-tab — after a long idle or ad the socket
+        may silently close ('no close frame received or sent').
+        This reopens it by fetching the tab list and reattaching.
+        Returns True if reconnection succeeded or tab was already healthy.
+        """
+        # First check if current tab is still healthy
+        try:
+            if self.tab:
+                result = await asyncio.wait_for(
+                    self.tab.evaluate("1+1", return_by_value=True),
+                    timeout=3.0
+                )
+                return True  # Already healthy
+        except Exception:
+            pass
+
+        self._log("[Reconnect] Tab WS dropped — attempting reconnect…")
+
+        try:
+            if not self.browser:
+                return False
+
+            # Try nodriver browser methods to refresh tab list
+            for method_name in ("update_targets", "_get_targets", "get_targets"):
+                m = getattr(self.browser, method_name, None)
+                if callable(m):
+                    try:
+                        await m()
+                        break
+                    except Exception:
+                        pass
+
+            tabs = getattr(self.browser, "tabs", []) or []
+            if not tabs:
+                return False
+
+            # Try each tab, preferring YouTube tabs
+            candidates = []
+            for t in tabs:
+                url = getattr(t, "url", "") or ""
+                score = 2 if "youtube.com" in url else 1
+                candidates.append((score, t))
+            candidates.sort(key=lambda x: -x[0])
+
+            for _, t in candidates:
+                try:
+                    # Try activate first (re-establishes WS in some nodriver versions)
+                    if hasattr(t, "activate"):
+                        try:
+                            await asyncio.wait_for(t.activate(), timeout=3.0)
+                        except Exception:
+                            pass
+                    result = await asyncio.wait_for(
+                        t.evaluate("1+1", return_by_value=True),
+                        timeout=5.0
+                    )
+                    self.tab = t
+                    if self._anti_sleep:
+                        self._anti_sleep._tab = t
+                    self._log("[Reconnect] Tab WS refreshed ✓")
+                    return True
+                except Exception:
+                    continue
+
+            self._log("[Reconnect] All tabs unresponsive")
+            return False
+        except Exception as e:
+            self._log(f"[Reconnect] Error: {e}")
+            return False
+
+    async def inject_cookies_from_pool(self) -> None:
+        """Load cookie sets from cookies_pool.json and inject them into Chrome via CDP."""
+        try:
+            import json
+            from pathlib import Path
+            import nodriver as uc
+            
+            root_dir = Path(__file__).resolve().parent.parent
+            pool_file = root_dir / "cookies_pool.json"
+            
+            if not pool_file.exists():
+                return
+                
+            with open(pool_file, "r", encoding="utf-8") as f:
+                pool = json.load(f)
+                
+            sets = pool.get("sets", [])
+            if not sets:
+                return
+                
+            import hashlib
+            set_idx = int(hashlib.md5(self.profile_id.encode()).hexdigest(), 16) % len(sets)
+            cookie_set = sets[set_idx]
+            
+            cookies = cookie_set.get("cookies", [])
+            if not cookies:
+                return
+                
+            self._log(f"Injecting {len(cookies)} cookies from set '{cookie_set.get('label')}' via CDP")
+            
+            cdp_cookies = []
+            for c in cookies:
+                domain = str(c.get('domain', ''))
+                if not domain.startswith('.') and not domain.startswith('http') and not domain.startswith('127.'):
+                    domain = '.' + domain
+                    
+                cdp_cookies.append({
+                    'name': str(c.get('name', '')),
+                    'value': str(c.get('value', '')),
+                    'domain': domain,
+                    'path': str(c.get('path', '/')),
+                    'secure': bool(c.get('secure', False)),
+                    'httpOnly': bool(c.get('httpOnly', False)),
+                    'sameSite': 'Lax'
+                })
+                
+            await self.tab.send(uc.cdp.network.set_cookies(cdp_cookies))
+            self._log("Cookie injection successful ✓")
+            
+        except Exception as e:
+            self._log(f"Error injecting cookies: {e}")
 
     # ── Warm up ───────────────────────────────────────────────────────────────
 
@@ -127,7 +257,11 @@ class YouTubeAgent:
         """Navigate to YouTube home — dismiss consent if any."""
         self._log("Warm-up: navigating to YouTube home")
         try:
+            # Inject cookies before navigating to YouTube
+            await self.inject_cookies_from_pool()
             await self.tab.get("https://www.youtube.com")
+            if self._anti_sleep:
+                await self._anti_sleep.on_page_load("warm-up")
             await asyncio.sleep(self._rng.uniform(2.0, 4.0))
             # Try dismiss consent overlay
             await self._dismiss_consent()
@@ -171,6 +305,18 @@ class YouTubeAgent:
         if not self.tab:
             raise RuntimeError("Not connected")
 
+        from server_python.behavior.youtube.action_context import set_trust_gmail_login, trust_gmail_login
+
+        eng = engagement or {}
+        self._watch_engagement = eng
+        self._current_video_id = video_id
+        set_trust_gmail_login(bool(eng.get("gmailLoggedIn", eng.get("gmailReady", False))))
+        self._log(
+            f"[Engagement] like={eng.get('like')} sub={eng.get('subscribe')} "
+            f"bell={eng.get('bell')} comment={eng.get('comment')} "
+            f"gmailTrusted={trust_gmail_login()}"
+        )
+
         video_id = (video_id or "").strip()
         if not video_id or len(video_id) != 11:
             self._log(f"Invalid video_id {video_id!r} — need 11-char YouTube ID")
@@ -192,18 +338,27 @@ class YouTubeAgent:
             profile_id=self.profile_id,
             rng=self._rng,
             log=self._log,
+            wake_fn=self._anti_sleep.bring_to_foreground if self._anti_sleep else None,
         )
 
         nav_mode = (source or "").strip().lower() or "entropy"
         self._log(f"Navigation mode={nav_mode} → video: {video_id}")
-        nav_success = await entropy.execute_for_source(self.tab, target, source=source)
+        if self._anti_sleep:
+            await self._anti_sleep.bring_to_foreground("pre-navigation")
+        nav_success = await entropy.execute_for_source(
+            self.tab, target, source=source, wake_fn=self._anti_sleep.bring_to_foreground if self._anti_sleep else None,
+        )
 
         if not nav_success:
             # Fallback: direct URL
             self._log("Entropy navigation failed — falling back to direct URL")
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             try:
+                if self._anti_sleep:
+                    await self._anti_sleep.bring_to_foreground("direct-fallback")
                 await self.tab.get(video_url)
+                if self._anti_sleep:
+                    await self._anti_sleep.on_page_load("direct-fallback")
                 await asyncio.sleep(self._rng.uniform(2.0, 4.0))
             except Exception as e:
                 self._log(f"Direct URL fallback also failed: {e}")
@@ -213,8 +368,8 @@ class YouTubeAgent:
         await self._dismiss_consent()
         await asyncio.sleep(self._rng.uniform(1.5, 2.5))
 
-        _ad_delay_min = int((engagement or {}).get("adSkipDelaySec", 5))
-        _ad_delay_max = int((engagement or {}).get("adSkipDelayMaxSec", 15))
+        _ad_delay_min = int((engagement or {}).get("adSkipDelaySec", 10))
+        _ad_delay_max = int((engagement or {}).get("adSkipDelayMaxSec", 14))
         if (engagement or {}).get("adSkipEnabled", True):
             self._log("Pre-roll ad handling (monetized-safe order)…")
             await self._skip_ads(delay_min=_ad_delay_min, delay_max=_ad_delay_max)
@@ -223,21 +378,30 @@ class YouTubeAgent:
             await asyncio.sleep(self._rng.uniform(8.0, 15.0))
 
         # Wait for main video player after ads
+        # First: reconnect tab WS in case it dropped during a long ad
+        await self._reconnect_tab()
         from server_python.human_engine import wait_for_player
         player_ready = await wait_for_player(self.tab, timeout=60.0)
         self._log(f"Player ready: {player_ready}")
         if not player_ready:
-            self._log("Player not ready — retrying direct URL once")
+            self._log("Player not ready — reconnecting + retrying direct URL once")
+            # Try reconnect again before navigating
+            await self._reconnect_tab()
             try:
                 await self.tab.get(f"https://www.youtube.com/watch?v={video_id}")
                 await asyncio.sleep(self._rng.uniform(4.0, 6.0))
                 await self._dismiss_consent()
                 if (engagement or {}).get("adSkipEnabled", True):
                     await self._skip_ads(delay_min=_ad_delay_min, delay_max=_ad_delay_max)
+                await self._reconnect_tab()
                 player_ready = await wait_for_player(self.tab, timeout=45.0)
                 self._log(f"Player ready after retry: {player_ready}")
             except Exception as e:
                 self._log(f"Player retry failed: {e}")
+                # Last ditch: reconnect and try player check one more time
+                if await self._reconnect_tab():
+                    player_ready = await wait_for_player(self.tab, timeout=20.0)
+                    self._log(f"Player ready after emergency reconnect: {player_ready}")
         if not player_ready:
             try:
                 raw_url = await self._js("location.href", action_name="GET_URL", wrap=False)
@@ -248,8 +412,8 @@ class YouTubeAgent:
 
         eng = engagement or {}
         if eng.get("honestTest") or self.settings.get("honestTest"):
-            from behavior.youtube.action_audit import ActionAudit
-            from behavior.youtube.verify_actions import verify_logged_in
+            from server_python.behavior.youtube.action_audit import ActionAudit
+            from server_python.behavior.youtube.verify_actions import verify_logged_in
 
             pname = eng.get("profileName") or self.settings.get("profileName") or self.profile_id[:8]
             ActionAudit.enable(self.profile_id, pname)
@@ -322,6 +486,9 @@ class YouTubeAgent:
         watch_secs = max(60.0, min(duration * watch_pct, 600.0))
         self._log(f"Will watch {watch_secs:.0f}s / {duration:.0f}s ({watch_pct:.0%})")
 
+        if self._anti_sleep:
+            await self._anti_sleep.bring_to_foreground("pre-watch")
+
         # 6. Start Guardian (background video-continuity watcher)
         guardian = PlaybackGuardian(tab=self.tab, log_fn=self._log)
         self._guardian = guardian
@@ -386,7 +553,7 @@ class YouTubeAgent:
             self._guardian = None
             audit = None
             try:
-                from behavior.youtube.action_audit import ActionAudit
+                from server_python.behavior.youtube.action_audit import ActionAudit
                 audit = ActionAudit.current()
                 if audit:
                     self._log(f"[AUDIT] session captured {len(audit.rows)} action rows (saved on profile close)")
@@ -420,6 +587,25 @@ class YouTubeAgent:
             await self._human_pause(0.5, 1.0)
         except Exception:
             pass
+
+    async def _ensure_on_watch_page(self) -> bool:
+        """Return to watch URL if navigation drifted to homepage."""
+        vid = getattr(self, "_current_video_id", "") or ""
+        if not vid or not self.tab:
+            return False
+        try:
+            raw = await self.tab.evaluate("location.href", return_by_value=True)
+            href = str(getattr(raw, "value", raw) or "")
+            if f"watch?v={vid}" in href:
+                return True
+            self._log(f"[Engagement] Off watch page ({href[:60]}) — navigating back…")
+            await self.tab.get(f"https://www.youtube.com/watch?v={vid}")
+            await asyncio.sleep(self._rng.uniform(2.0, 3.5))
+            await self._scroll_to_video_top()
+            return True
+        except Exception as exc:
+            self._log(f"[Engagement] ensure watch page failed: {exc}")
+            return False
 
     async def _human_watch_loop(
         self,
@@ -464,15 +650,26 @@ class YouTubeAgent:
         _MAX_LIKE_ATTEMPTS = 3
         watch_deadline = time.monotonic() + watch_secs
 
-        # Anti-detection: max 0-2 pauses per session, min 30s apart (~50% sessions = zero)
+        # Rule 3: Play/Pause — only after 30% of video duration, max 1-2 times
         pause_limiter = PlayPauseLimiter(rng=rng)
         _pause_hold_cfg = float(engagement.get("pauseHoldSec", 0) or 0)
         _pause_prob = min(0.08, max(0.0, float(engagement.get("pauseProbability", 0.05))))
-        _pause_earliest = max(30.0, pause_at)
+        # Rule 3: earliest = 30% of video duration (not just 30 seconds)
+        _pause_earliest = max(watch_secs * 0.30, 60.0)
+        if _pause_prob > 0 and pause_limiter.max_pauses == 0:
+            pause_limiter.max_pauses = 1
         self._log(
             f"[PauseLimiter] max={pause_limiter.max_pauses} "
-            f"prob={_pause_prob:.0%} earliest={_pause_earliest:.0f}s"
+            f"prob={_pause_prob:.0%} earliest={_pause_earliest:.0f}s (30% of {watch_secs:.0f}s)"
         )
+
+        # Rule 7: Autoplay re-verify at 80% mark — track if done
+        _autoplay_recheck_done = False
+        _autoplay_recheck_at = watch_secs * 0.80
+
+        # Rule 9: Seek counter — max 1-3 times, NOT during ads
+        _seek_count = 0
+        _seek_max = rng.randint(1, 3)
 
         _scroll_enabled = engagement.get(
             "scrollActivity",
@@ -500,9 +697,24 @@ class YouTubeAgent:
             elapsed += chunk
 
             # Mid-roll ads during watch
+            _ad_active = False
             if engagement.get("adSkipEnabled", True):
                 if await self._try_skip_ad_quick():
                     guardian.suppress(6.0)
+                    _ad_active = True
+            # Quick ad state check (without skipping) for action guards
+            if not _ad_active:
+                try:
+                    _ad_active = await is_ad_playing(self.tab)
+                except Exception:
+                    _ad_active = False
+
+            # Rule 7: Autoplay re-verify at 80% mark (ALWAYS OFF — security rule)
+            if not _autoplay_recheck_done and elapsed >= _autoplay_recheck_at:
+                _autoplay_recheck_done = True
+                self._log("[Autoplay] Re-checking at 80% mark (SECURITY)...")
+                await yt_desktop.disable_autoplay(self.tab)
+                self._log("[Autoplay] Re-verified OFF at 80% ✓")
 
             engagement_this_tick = False
 
@@ -542,9 +754,10 @@ class YouTubeAgent:
                 and "desc_link" not in engagement_done
                 and engagement.get("descriptionLinks", False)
             )
+            # Rule 9: Seek — max _seek_max times, NOT during ads
             will_seek = (
                 elapsed >= seek_at
-                and "seek" not in engagement_done
+                and _seek_count < _seek_max
                 and engagement.get("seekEnabled", True)
             )
             will_cmt = (
@@ -587,8 +800,8 @@ class YouTubeAgent:
             if rng.random() < behavior.mouse_prob:
                 await self._move_mouse()
 
-            # Rate-limited pause — max 0-2 per session, realistic 2-6s hold (not 18-28s)
-            if pause_limiter.can_pause(elapsed) and elapsed >= _pause_earliest:
+            # Rule 3: Pause — NOT during ads, only after 30% duration, verify resume
+            if pause_limiter.can_pause(elapsed) and elapsed >= _pause_earliest and not _ad_active:
                 explicit_hold = _pause_hold_cfg > 0 and pause_limiter.pauses_in_session == 0
                 random_hit = _pause_prob > 0 and rng.random() < _pause_prob
                 if explicit_hold or random_hit:
@@ -605,7 +818,21 @@ class YouTubeAgent:
                     await asyncio.sleep(hold)
                     await self._focus_player()
                     await yt_desktop.play(self.tab)
-                    self._log("Resume after pause ✓")
+                    # Rule 3: Verify video resumed playing after pause
+                    await asyncio.sleep(1.5)
+                    try:
+                        from server_python.behavior.youtube.state import get_current_time as _get_ct
+                        t1 = await _get_ct(self.tab)
+                        await asyncio.sleep(2.0)
+                        t2 = await _get_ct(self.tab)
+                        if t2 > t1:
+                            self._log(f"Resume after pause VERIFIED ✓ (t={t2:.1f}s)")
+                        else:
+                            # Force play again
+                            await yt_desktop.play(self.tab)
+                            self._log("Resume after pause: force play retry ✓")
+                    except Exception:
+                        pass
                     engagement_this_tick = True
 
             # Execute pending actions in profile-unique order
@@ -618,23 +845,30 @@ class YouTubeAgent:
                     continue
 
                 elif action == "seek":
-                    guardian.suppress(5.0)
-                    _seek_dir_cfg = engagement.get("seekDirection", "both")
-                    if _seek_dir_cfg == "forward":
-                        direction = "forward"
-                    elif _seek_dir_cfg == "backward":
-                        direction = "backward"
-                    elif behavior.seek_dir == "mixed":
-                        direction = rng.choice(["forward", "forward", "backward"])
+                    # Rule 9: NOT during ads, max 30s, 1-3 times
+                    if _ad_active:
+                        self._log("[Seek] SKIPPED — ad is playing (Rule 9)")
                     else:
-                        direction = behavior.seek_dir
-                    seek_ok = await self._do_seek(direction, seconds=behavior.seek_seconds)
-                    if seek_ok:
-                        engagement_done.add("seek")
-                    else:
-                        engagement_done.add("seek_failed")
+                        guardian.suppress(5.0)
+                        _seek_dir_cfg = engagement.get("seekDirection", "both")
+                        if _seek_dir_cfg == "forward":
+                            direction = "forward"
+                        elif _seek_dir_cfg == "backward":
+                            direction = "backward"
+                        elif behavior.seek_dir == "mixed":
+                            direction = rng.choice(["forward", "forward", "backward"])
+                        else:
+                            direction = behavior.seek_dir
+                        seek_secs = min(behavior.seek_seconds, 30)  # max 30s cap
+                        seek_ok = await self._do_seek(direction, seconds=seek_secs)
+                        _seek_count += 1
+                        if seek_ok:
+                            engagement_done.add("seek")
+                        # Next seek timing (if within max count)
+                        seek_at = elapsed + rng.uniform(45.0, 120.0)
 
                 elif action == "like":
+                    await self._ensure_on_watch_page()
                     await self._scroll_to_video_top()
                     _scrolled_away = False
                     guardian.suppress(8.0)
@@ -684,6 +918,7 @@ class YouTubeAgent:
                     _scrolled_away = False
 
                 elif action == "subscribe":
+                    await self._ensure_on_watch_page()
                     if _scrolled_away:
                         await self._scroll_to_video_top()
                         _scrolled_away = False
@@ -693,6 +928,18 @@ class YouTubeAgent:
                         self._log("✅ Subscribed ✓")
 
                 elif action == "bell":
+                    # Bell can only work AFTER subscribe — if subscribe not done yet, do it first
+                    if "subscribe" not in engagement_done:
+                        self._log("🔔 Bell: subscribe not done yet — doing subscribe first")
+                        await self._ensure_on_watch_page()
+                        if _scrolled_away:
+                            await self._scroll_to_video_top()
+                            _scrolled_away = False
+                        guardian.suppress(8.0)
+                        if await self._do_subscribe():
+                            engagement_done.add("subscribe")
+                            self._log("✅ Subscribed ✓ (forced before bell)")
+                            await asyncio.sleep(1.5)
                     if _scrolled_away:
                         await self._scroll_to_video_top()
                         _scrolled_away = False
@@ -728,6 +975,41 @@ class YouTubeAgent:
                     await self._scroll_to_video_top()
                     _scrolled_away = False
 
+        # Forced fallback: comment was enabled and due but never landed (timing
+        # missed near loop end / interrupted by ads) — force it now before exit
+        # NOTE: don't gate on `elapsed >= cmt_at` — wall-clock time spent on ads/
+        # guardian/etc. often eats the budget before the elapsed counter reaches
+        # the scheduled percentage, so the loop exits early and comment never
+        # gets a chance. If comment is enabled and still pending, force it now.
+        if (
+            engagement.get("comment", False)
+            and "comment" not in engagement_done
+        ):
+            self._log("💬 Comment was due but missed — forcing now before watch ends")
+            comment_text = (
+                engagement.get("commentText")
+                or self._get_ai_comment(video_title, channel, engagement)
+            )
+            if comment_text:
+                try:
+                    guardian.suppress(25.0)
+                    if _scrolled_away:
+                        await self._scroll_to_video_top()
+                        _scrolled_away = False
+                    if await self._do_comment(comment_text):
+                        engagement_done.add("comment")
+                        self._log(f"💬 Comment posted (forced): {comment_text[:40]!r}")
+                        # Dwell after posting — don't let the session/profile
+                        # close instantly right after the comment lands; a real
+                        # human would sit on the page a few seconds afterward
+                        await asyncio.sleep(
+                            rng.uniform(behavior.comment_dwell_lo, behavior.comment_dwell_hi)
+                        )
+                        await self._scroll_to_video_top()
+                        _scrolled_away = False
+                except Exception as e:
+                    self._log(f"Forced comment failed: {e}")
+
         if scroll_planner.completed:
             self._log(f"[ScrollActivity] completed: {scroll_planner.completed}")
         self._log(
@@ -738,7 +1020,7 @@ class YouTubeAgent:
         return engagement_done
 
     def _get_ai_comment(self, video_title: str, channel: str, engagement: dict) -> str | None:
-        """Get AI-generated comment or fall back to template."""
+        """Get AI-generated comment or fall back to template. Adds human typos (Rule 6)."""
         templates = engagement.get("comment_templates", [
             "Great video! Really helpful content.",
             "This is exactly what I was looking for.",
@@ -746,10 +1028,11 @@ class YouTubeAgent:
             "Very informative, learned a lot.",
             "Keep up the great work!",
         ])
+        text = None
         try:
             from server_python.ai_brain import generate_comment, is_available
             if is_available() and video_title:
-                return generate_comment(
+                text = generate_comment(
                     video_title=video_title,
                     channel_name=channel,
                     fallback_templates=templates,
@@ -757,7 +1040,46 @@ class YouTubeAgent:
                 )
         except Exception:
             pass
-        return self._rng.choice(templates) if templates else None
+        if not text:
+            text = self._rng.choice(templates) if templates else None
+        if text:
+            text = self._add_human_typos(text)
+        return text
+
+    def _add_human_typos(self, text: str) -> str:
+        """
+        Rule 6: Human kabhi kabhi likhne mein galti bhi karta hai.
+        ~30% chance of 1 small typo — swap adjacent chars or miss a letter.
+        """
+        if self._rng.random() > 0.30:
+            return text  # 70% of time: no typo
+
+        words = text.split()
+        if not words:
+            return text
+
+        # Pick a random word (not first/last, prefer middle)
+        idx = self._rng.randint(1, max(1, len(words) - 1))
+        word = words[idx]
+        if len(word) < 3:
+            return text  # too short for a meaningful typo
+
+        typo_type = self._rng.randint(0, 2)
+        if typo_type == 0:
+            # Swap two adjacent characters
+            i = self._rng.randint(0, len(word) - 2)
+            word = word[:i] + word[i+1] + word[i] + word[i+2:]
+        elif typo_type == 1:
+            # Drop a random non-first letter
+            i = self._rng.randint(1, len(word) - 1)
+            word = word[:i] + word[i+1:]
+        else:
+            # Double a letter
+            i = self._rng.randint(0, len(word) - 1)
+            word = word[:i] + word[i] + word[i:]
+
+        words[idx] = word
+        return " ".join(words)
 
     # ── Watch by direct URL (simple mode) ─────────────────────────────────────
 
@@ -810,67 +1132,134 @@ class YouTubeAgent:
         """Get video duration — V2 state helper with ad-stub filtering."""
         return await get_video_duration_when_ready(self.tab)
 
-    async def _skip_ads(self, delay_min: int = 5, delay_max: int = 15) -> None:
+    async def _skip_ads(self, delay_min: int = 10, delay_max: int = 14) -> None:
         """
-        Skip ads using AdHandler + CDP hover+click (same as like button).
-        Human delay before first skip attempt; polls until ad clears.
+        Pre-roll ad skip — canonical ad_skip_engine (FOURTEEN_ACTIONS['ad_skip']).
         """
         try:
-            from server_python.ad_handler import AdHandler
-            handler = AdHandler(self.tab, log_fn=self._log, rng=self._rng)
-            handler._mouse_x = self._mouse_x
-            handler._mouse_y = self._mouse_y
-            await handler.wait_for_video_start(
-                skip_ads=True,
-                timeout=120.0,
+            from server_python.ad_skip_engine import skip_ads_until_clear, wait_for_main_video
+            from server_python.behavior.youtube.action_audit import ActionAudit
+            from server_python.fourteen_actions import verify_log_for
+
+            verify_marker = verify_log_for("ad_skip")
+            ok, proof, self._mouse_x, self._mouse_y = await skip_ads_until_clear(
+                self.tab,
                 delay_min=float(delay_min),
                 delay_max=float(delay_max),
+                timeout=180.0,
+                log_fn=self._log,
+                rng=self._rng,
+                mouse_x=self._mouse_x,
+                mouse_y=self._mouse_y,
             )
-            self._mouse_x = handler._mouse_x
-            self._mouse_y = handler._mouse_y
+            self._last_ad_skip_proof = proof
+            verified = (
+                verify_marker in proof
+                or "VERIFIED" in proof
+                or proof in ("NO_AD", "UNSKIPPABLE_NO_UI")
+            )
+            audit = ActionAudit.current()
+            if audit:
+                audit.record(
+                    "ad_skip",
+                    click_registered=verified,
+                    verified=verified,
+                    reason=proof,
+                )
+            if not ok:
+                self._log(f"[AdSkip] Pre-roll result: {proof} — waiting for main video…")
+
+            playing, self._mouse_x, self._mouse_y = await wait_for_main_video(
+                self.tab,
+                timeout=120.0,
+                skip_ads=True,
+                delay_min=float(delay_min),
+                delay_max=float(delay_max),
+                log_fn=self._log,
+                rng=self._rng,
+                mouse_x=self._mouse_x,
+                mouse_y=self._mouse_y,
+            )
+            if not playing:
+                self._log("[AdSkip] Main video not confirmed — continuing watch loop")
         except Exception as e:
             self._log(f"Ad skip warning (non-fatal): {e}")
 
     async def _try_skip_ad_quick(self) -> bool:
-        """Mid-roll ad skip during watch loop — no extra human delay."""
+        """Mid-roll ad skip during watch loop — ad_skip_engine.skip_ads_poll."""
         try:
-            from server_python.ad_handler import AdHandler
-            handler = AdHandler(self.tab, log_fn=self._log, rng=getattr(self, "_watch_rng", None) or self._rng)
-            handler._mouse_x = self._mouse_x
-            handler._mouse_y = self._mouse_y
-            if await handler.skip_ad_if_present():
-                self._mouse_x = handler._mouse_x
-                self._mouse_y = handler._mouse_y
+            from server_python.ad_skip_engine import skip_ads_poll, is_ad_showing
+            from server_python.behavior.youtube.action_audit import ActionAudit
+            from server_python.fourteen_actions import verify_log_for
+
+            if not await is_ad_showing(self.tab):
+                return False
+
+            eng = getattr(self, "_watch_engagement", None) or {}
+            delay_min = float(eng.get("adSkipDelaySec", 10))
+            delay_max = float(eng.get("adSkipDelayMaxSec", 14))
+            verify_marker = verify_log_for("ad_skip")
+
+            ok, proof, self._mouse_x, self._mouse_y = await skip_ads_poll(
+                self.tab,
+                delay_min=delay_min,
+                delay_max=delay_max,
+                timeout=90.0,
+                log_fn=self._log,
+                rng=getattr(self, "_watch_rng", None) or self._rng,
+                mouse_x=self._mouse_x,
+                mouse_y=self._mouse_y,
+            )
+            verified = verify_marker in proof or "VERIFIED" in proof
+            audit = ActionAudit.current()
+            if audit:
+                audit.record(
+                    "ad_skip",
+                    click_registered=ok,
+                    verified=verified,
+                    reason=proof,
+                )
+            if verified:
+                self._log(f"[AdSkip] Mid-roll {proof}")
                 return True
-        except Exception:
-            pass
+            if ok and proof in ("NO_AD", "UNSKIPPABLE_NO_UI"):
+                return True
+        except Exception as exc:
+            self._log(f"[AdSkip] Mid-roll error: {exc}")
         return False
 
     async def _apply_video_settings(self) -> None:
-        """Apply settings: autoplay OFF — verified only."""
-        from behavior.youtube.action_audit import ActionAudit
-        from behavior.youtube.selectors import DESKTOP
+        """Apply settings: autoplay OFF — with retry (button sometimes loads late)."""
+        from server_python.behavior.youtube.action_audit import ActionAudit
+        from server_python.behavior.youtube.selectors import DESKTOP
 
         try:
-            from behavior.youtube.verify_actions import verify_autoplay_off
+            from server_python.behavior.youtube.verify_actions import verify_autoplay_off
 
-            ok = await yt_desktop.disable_autoplay(self.tab)
-            verified = ok and await verify_autoplay_off(self.tab)
+            verified = False
+            for attempt in range(3):
+                ok = await yt_desktop.disable_autoplay(self.tab)
+                verified = ok and await verify_autoplay_off(self.tab)
+                if verified:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(2.0)  # wait for button to appear
+
             audit = ActionAudit.current()
             if audit:
                 audit.record(
                     "autoplay_off",
                     selector_used=str(DESKTOP.get("autoplay_toggle_button", ("",))[0]),
-                    click_registered=ok,
+                    click_registered=verified,
                     verified=verified,
                     reason="UI_VERIFIED visible toggle off" if verified else "toggle not visible or still ON",
                 )
             if verified:
                 self._log("Autoplay OFF OK (UI verified)")
             else:
-                self._log("Autoplay OFF FAILED (not visible or still ON)")
+                self._log("Autoplay OFF FAILED (non-critical — continuing)")
         except Exception as exc:
-            self._log(f"Autoplay OFF error: {exc}")
+            self._log(f"Autoplay OFF error (non-critical): {exc}")
 
     async def _focus_player(self) -> None:
         """Focus player so keyboard shortcuts (k/j/l) work — V2 player_focus."""
@@ -902,14 +1291,24 @@ class YouTubeAgent:
             return False
 
     async def _do_subscribe(self) -> bool:
-        """Subscribe — V2 safe_click + is_subscribed() guard."""
+        """Subscribe — with retry up to 3 times, verified by bell visibility."""
         try:
             if await is_subscribed(self.tab):
+                self._log("✅ Already subscribed ✓")
                 return True
-            ok, proof = await yt_desktop.subscribe(self.tab, want=True)
-            await self._human_pause(0.5, 1.5)
-            return ok
-        except Exception:
+            for attempt in range(3):
+                ok, proof = await yt_desktop.subscribe(self.tab, want=True)
+                self._log(f"[Subscribe] attempt {attempt+1}: {proof}")
+                if ok and "VERIFIED" in proof:
+                    return True
+                if attempt < 2:
+                    await asyncio.sleep(2.0)
+                    # Scroll to top again before retry
+                    await self._scroll_to_video_top()
+                    await asyncio.sleep(0.5)
+            return False
+        except Exception as e:
+            self._log(f"Subscribe error: {e}")
             return False
 
     async def _do_comment(self, text: str) -> bool:
@@ -919,8 +1318,9 @@ class YouTubeAgent:
         try:
             await yt_desktop.scroll_to_comments(self.tab)
             ok, proof = await yt_desktop.post_comment(self.tab, text)
+            self._log(f"[Comment] {proof}")
             await self._human_pause(1.0, 2.0)
-            return ok
+            return ok and "VERIFIED" in proof
         except Exception as e:
             self._log(f"Comment error: {e}")
             return False
@@ -938,25 +1338,47 @@ class YouTubeAgent:
             return False
 
     async def _do_bell(self) -> bool:
-        """Bell notification — V2 toggle_bell + set_bell_level('All')."""
+        """Bell notification — only works after subscribe. Checks subscribe state first."""
         try:
+            # Bell only visible after subscribe — verify first
+            if not await is_subscribed(self.tab):
+                self._log("🔔 Bell SKIPPED — not subscribed yet")
+                return False
+            await self._scroll_to_video_top()
+            await asyncio.sleep(0.5)
             if not await yt_desktop.toggle_bell(self.tab):
+                self._log("🔔 Bell toggle FAILED — button not found/invisible")
                 return False
             await self._human_pause(0.8, 1.5)
             ok, proof = await yt_desktop.set_bell_level(self.tab, "All")
             if ok:
                 await self._human_pause(0.5, 1.0)
                 self._log("🔔 Bell notification ON ✓")
+            else:
+                self._log(f"🔔 Bell level set FAILED: {proof}")
             return ok
-        except Exception:
+        except Exception as e:
+            self._log(f"Bell error: {e}")
             return False
 
     async def _do_quality_change(self, quality: str = "auto") -> bool:
-        """Change video quality — bulletproof V2 change_quality with diagnostics."""
+        """Change video quality — NOT during ads (Rule 2), verified + retry."""
         if quality in ("auto", ""):
             return True
         try:
-            from behavior.youtube.quality import change_quality
+            # Rule 2: Confirm ads nahi chal rahi hai
+            ad_running = await is_ad_playing(self.tab)
+            if ad_running:
+                self._log(f"[Quality] SKIPPED — ad is playing (Rule 2). Will retry after ad.")
+                await asyncio.sleep(15.0)  # wait for ad
+                ad_running = await is_ad_playing(self.tab)
+                if ad_running:
+                    self._log("[Quality] Ad still running — quality change deferred")
+                    return False
+        except Exception:
+            pass
+        try:
+            from server_python.behavior.youtube.quality import change_quality
 
             ok, proof = await change_quality(
                 self.tab,
@@ -965,8 +1387,8 @@ class YouTubeAgent:
                 rng=self._rng,
                 max_attempts=4,
             )
-            from behavior.youtube.action_audit import ActionAudit
-            from behavior.youtube.selectors import DESKTOP
+            from server_python.behavior.youtube.action_audit import ActionAudit
+            from server_python.behavior.youtube.selectors import DESKTOP
 
             verified = ok and "UI_VERIFIED" in proof
             audit = ActionAudit.current()
@@ -992,7 +1414,7 @@ class YouTubeAgent:
     async def _do_volume_adjust(self, target_pct: int | None = None) -> None:
         """Set player volume — V2 set_volume + get_volume_percent verify."""
         try:
-            target = int(target_pct if target_pct is not None else self._rng.randint(60, 95))
+            target = int(target_pct if target_pct is not None else self._rng.randint(75, 100))
             target = max(0, min(100, target))
             low = max(10, target - self._rng.randint(20, 35))
             high = min(100, target + self._rng.randint(8, 20))
@@ -1002,12 +1424,12 @@ class YouTubeAgent:
             self._log(f"Volume target -> {proof} (wanted {target}%)")
             await self._human_pause(0.5, 1.0)
 
-            from behavior.youtube.player_controls import read_volume_slider_pct
-            from behavior.youtube.verify_actions import verify_volume
+            from server_python.behavior.youtube.player_controls import read_volume_slider_pct
+            from server_python.behavior.youtube.verify_actions import verify_volume
 
             final = await read_volume_slider_pct(self.tab)
             vol_ok = "UI_VERIFIED" in proof and await verify_volume(self.tab, target)
-            from behavior.youtube.action_audit import ActionAudit
+            from server_python.behavior.youtube.action_audit import ActionAudit
             audit = ActionAudit.current()
             if audit:
                 audit.record(
@@ -1025,30 +1447,63 @@ class YouTubeAgent:
             self._log(f"Volume adjust error: {e}")
 
     async def _do_seek(self, direction: str = "forward", seconds: int | None = None) -> bool:
-        """Seek forward/backward — verify currentTime changed."""
+        """Seek forward/backward — keyboard first, JS currentTime fallback. Skips during ads."""
         try:
-            from behavior.youtube.verify_actions import verify_seeked
-            from behavior.youtube.state import get_current_time
+            # Don't seek during ad — video element changes during ads
+            if await is_ad_playing(self.tab):
+                self._log(f"Seek SKIPPED — ad is playing")
+                return False
+            from server_python.behavior.youtube.verify_actions import verify_seeked
+            from server_python.behavior.youtube.state import get_current_time
 
             secs = seconds if seconds is not None else self._rng.choice([10, 15, 20])
             before = await get_current_time(self.tab)
+            # video element transiently missing (page settling) — wait for it instead
+            # of seeking against a bogus before=0 that always "fails"
+            for _ in range(5):
+                if before >= 0:
+                    break
+                await asyncio.sleep(0.6)
+                if await is_ad_playing(self.tab):
+                    self._log("Seek SKIPPED — ad started while waiting for video element")
+                    return False
+                before = await get_current_time(self.tab)
+            if before < 0:
+                self._log("Seek SKIPPED — video element not found after retries")
+                return False
             await self._focus_player()
             key = "l" if direction == "forward" else "j"
             presses = max(1, round(secs / 10))
             for _ in range(presses):
                 await self._tap_key(key)
                 await asyncio.sleep(self._rng.uniform(0.08, 0.2))
-            expected = secs if direction == "forward" else -secs
-            ok = await verify_seeked(self.tab, before, abs(expected))
-            from behavior.youtube.action_audit import ActionAudit
+            ok = await verify_seeked(self.tab, before, secs, direction=direction)
+
+            if not ok:
+                from server_python.yt_actions import seek_backward, seek_forward
+                proof = "video_not_found"
+                for retry in range(3):
+                    if direction == "forward":
+                        ok, proof = await seek_forward(self.tab, secs)
+                    else:
+                        ok, proof = await seek_backward(self.tab, secs)
+                    if ok or "video_not_found" not in proof:
+                        break
+                    await asyncio.sleep(0.8)
+                    if await is_ad_playing(self.tab):
+                        self._log("Seek SKIPPED — ad started mid-retry")
+                        return False
+                self._log(f"Seek JS fallback ({direction} {secs}s): {proof}")
+
+            from server_python.behavior.youtube.action_audit import ActionAudit
             audit = ActionAudit.current()
             if audit:
                 audit.record(
                     f"seek_{direction}_{secs}s",
-                    selector_used="CDP keypress (j/l)",
+                    selector_used="CDP keypress (j/l) + JS fallback",
                     click_registered=True,
                     verified=ok,
-                    reason=f"before={before:.1f}s delta_expected={abs(expected)}",
+                    reason=f"before={before:.1f}s delta={secs}s dir={direction}",
                 )
             if ok:
                 self._log(f"Seek {direction} {secs}s ✓ VERIFIED")
@@ -1073,8 +1528,8 @@ class YouTubeAgent:
         """Expand video description — V2 expand_description."""
         try:
             ok = await yt_desktop.expand_description(self.tab)
-            from behavior.youtube.action_audit import ActionAudit
-            from behavior.youtube.selectors import DESKTOP
+            from server_python.behavior.youtube.action_audit import ActionAudit
+            from server_python.behavior.youtube.selectors import DESKTOP
 
             audit = ActionAudit.current()
             if audit:
@@ -1210,6 +1665,12 @@ class YouTubeAgent:
 
     async def close(self) -> None:
         self._running = False
+        if self._anti_sleep:
+            try:
+                await self._anti_sleep.stop()
+            except Exception:
+                pass
+            self._anti_sleep = None
         if self._guardian:
             try:
                 await self._guardian.stop()
@@ -1453,3 +1914,4 @@ class AgentManager:
         for agent in list(self._active_agents.values()):
             await agent.close()
         self._active_agents.clear()
+

@@ -259,7 +259,7 @@ export function useStore() {
 
   // ============ CREATE PROFILE — Full pipeline with fingerprint + proxy ============
   const createProfile = useCallback(
-    async (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string): Promise<{ code: number; message?: string }> => {
+    async (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string): Promise<{ code: number; message?: string }> => {
       const current = browserProviderRef.current;
       let provider: BrowserProvider = current === 'all' ? 'multilogin' : current;
       if (current === 'all') {
@@ -312,6 +312,11 @@ export function useStore() {
         // Pass Android device model if user selected a specific one
         if (os === 'Android' && androidDevice && androidDevice !== 'auto') {
           body.androidDevice = androidDevice;
+        }
+
+        // Pass user-selected resolution (override country pool auto-pick)
+        if (resolution && resolution !== 'auto') {
+          body.resolution = resolution;
         }
 
         const res = await backendFetch('/api/profiles/create-full', {

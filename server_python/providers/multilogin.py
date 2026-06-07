@@ -4,14 +4,12 @@ MultiloginProvider — Python
 Node.js MultiloginProvider.cjs ka replacement.
 
 CDP Approach (Proven Working):
-  1. Start profile via MLX HTTP API (port 45000, no SSL)
-  2. Get running chrome.exe cmdline via WMI/PowerShell
-  3. Kill that chrome process
-  4. Re-launch with same cmdline + --remote-debugging-port=PORT
-  5. nodriver attaches to PORT
+  1. Start profile via MLX launcher API with automation_type=puppeteer
+  2. Read dynamic CDP port from response data.port
+  3. nodriver attaches to that port
 
-Why: MLX launcher's automation_type=cdp does NOT add --remote-debugging-port to chrome.
-     But chrome happily accepts it alongside MLX's --client-port flag.
+Why: MLX assigns a fresh CDP port per launch. Kill/relaunch hacks fail because the
+     MLX agent respawns chrome without --remote-debugging-port.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ import os
 import re
 import ssl
 import subprocess
+import time
 
 import aiohttp
 
@@ -49,22 +48,118 @@ def _profile_cdp_port(profile_id: str) -> int:
     return CDP_PORT_BASE + (h % CDP_PORT_RANGE)
 
 
+def _parse_wmic_process_pairs(stdout: str) -> list[tuple[int, str]]:
+    """Parse WMIC /format:list output into (pid, cmdline) pairs.
+
+    WMIC often puts ProcessId and CommandLine in separate blank-line blocks when
+    the command line is long (typical for MLX mimic browsers). Line-by-line
+    pairing handles both combined and split records.
+    """
+    if not stdout:
+        return []
+
+    normalized = stdout.replace("\r\r\n", "\n").replace("\r\n", "\n")
+    pairs: list[tuple[int, str]] = []
+    current_pid: int | None = None
+
+    for line in normalized.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("ProcessId="):
+            try:
+                current_pid = int(line.split("=", 1)[1].strip())
+            except ValueError:
+                current_pid = None
+        elif line.startswith("CommandLine="):
+            cmd = line.split("=", 1)[1].strip()
+            if current_pid is not None and cmd:
+                pairs.append((current_pid, cmd))
+            current_pid = None
+
+    return pairs
+
+
+def _run_wmic_chrome_processes(timeout: int = 30) -> str:
+    """Run WMIC query for chrome.exe processes; return stdout (may be empty)."""
+    try:
+        result = subprocess.run(
+            [
+                "wmic",
+                "process",
+                "where",
+                "name='chrome.exe'",
+                "get",
+                "ProcessId,CommandLine",
+                "/format:list",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+        return result.stdout or ""
+    except subprocess.TimeoutExpired:
+        log.warning("[MLX] wmic chrome query timeout after %ss", timeout)
+    except Exception as e:
+        log.debug("[MLX] wmic chrome query error: %s", e)
+    return ""
+
+
+def _load_settings_file() -> dict:
+    """Read user-settings.json from repo root (two levels up from this file)."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        settings_path = os.path.join(here, "..", "..", "user-settings.json")
+        settings_path = os.path.normpath(settings_path)
+        if os.path.exists(settings_path):
+            with open(settings_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
 class MultiloginProvider:
-    def __init__(self, token: str = ""):
+    def __init__(self, token: str = "", email: str = "", password: str = "", folder_id: str = ""):
+        # Try env vars first (set by main.py's _load_settings_to_env at startup)
         self.token     = token or os.getenv("MULTILOGIN_TOKEN", "")
-        self.folder_id = os.getenv("MULTILOGIN_FOLDER_ID", "")
-        self.email     = os.getenv("MULTILOGIN_EMAIL", "")
-        self.password  = os.getenv("MULTILOGIN_PASSWORD", "")
+        self.folder_id = folder_id or os.getenv("MULTILOGIN_FOLDER_ID", "")
+        self.email     = email or os.getenv("MULTILOGIN_EMAIL", "")
+        self.password  = password or os.getenv("MULTILOGIN_PASSWORD", "")
+
+        # Fallback: read user-settings.json directly (works even without main.py import)
+        if not self.token or not self.folder_id:
+            try:
+                s = _load_settings_file()
+                if not self.token:
+                    self.token = s.get("multiloginToken", "") or ""
+                if not self.folder_id:
+                    self.folder_id = s.get("multiloginFolderId", "") or ""
+                if not self.email:
+                    self.email = s.get("multiloginEmail", "") or ""
+                if not self.password:
+                    self.password = s.get("multiloginPassword", "") or ""
+            except Exception as e:
+                log.debug("[MLX] Could not read user-settings.json fallback: %s", e)
+
         self._session_token: str = ""
 
     # ── Auth ─────────────────────────────────────────────────────────────────
 
     async def _get_token(self) -> str:
-        if self.token:
-            return self.token
+        """Return valid token. Fresh signin on first call, then cached."""
         if self._session_token:
             return self._session_token
-        return await self._signin()
+        # Try fresh signin — if credentials exist
+        if self.email and self.password:
+            try:
+                return await self._signin()
+            except Exception as e:
+                log.warning(f"[MLX] signin failed ({e}) — using cached token from settings")
+        if self.token:
+            return self.token
+        raise RuntimeError("No Multilogin token available. Login to Multilogin X app first.")
 
     async def _signin(self) -> str:
         import hashlib as _h
@@ -78,10 +173,52 @@ class MultiloginProvider:
                 if not t:
                     raise RuntimeError(f"Signin failed: {data.get('message', data)}")
                 self._session_token = t
+                log.info("[MLX] signin OK — fresh token obtained")
                 return t
 
+    async def _call_launcher(self, path: str, *, method: str = "GET", retry_on_401: bool = True) -> tuple[int, str]:
+        """Call local MLX launcher. Auto-refreshes token on 401."""
+        token = await self._get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async def _do(base_url: str, ssl_ctx=None) -> tuple[int, str]:
+            kw = {"timeout": aiohttp.ClientTimeout(total=60)}
+            if ssl_ctx:
+                conn = aiohttp.TCPConnector(ssl=ssl_ctx)
+                session = aiohttp.ClientSession(connector=conn)
+            else:
+                session = aiohttp.ClientSession()
+            async with session as s:
+                fn = s.get if method == "GET" else s.post
+                async with fn(f"{base_url}{path}", headers=headers, **kw) as r:
+                    return r.status, await r.text()
+
+        # Try HTTP first, then HTTPS
+        try:
+            status, txt = await _do(LAUNCHER_HTTP)
+        except aiohttp.ClientConnectorError:
+            status, txt = await _do(LAUNCHER_HTTPS, ssl_ctx=_SSL_CTX)
+
+        if status == 401 and retry_on_401:
+            # Token expired — force fresh signin and retry once
+            log.warning("[MLX] 401 from launcher — forcing fresh signin")
+            self._session_token = ""  # clear cached
+            try:
+                new_token = await self._signin()
+                headers = {"Authorization": f"Bearer {new_token}"}
+                try:
+                    status, txt = await _do(LAUNCHER_HTTP)
+                except aiohttp.ClientConnectorError:
+                    status, txt = await _do(LAUNCHER_HTTPS, ssl_ctx=_SSL_CTX)
+                log.info(f"[MLX] retry after fresh signin: status={status}")
+            except Exception as se:
+                log.error(f"[MLX] re-signin failed: {se}")
+
+        log.info(f"[MLX] launcher {path[:60]} → {status}: {txt[:120]}")
+        return status, txt
+
     def _auth_header(self) -> dict:
-        return {"Authorization": f"Bearer {self.token or self._session_token}"}
+        return {"Authorization": f"Bearer {self._session_token or self.token}"}
 
     def _headers(self, strict: bool = False) -> dict:
         h = {**self._auth_header(), "Content-Type": "application/json", "Accept": "application/json"}
@@ -156,88 +293,96 @@ class MultiloginProvider:
 
     # ── Start profile (MAIN METHOD) ───────────────────────────────────────────
 
+    def _parse_launcher_start_response(self, status: int, txt: str) -> dict:
+        """Parse MLX /start response — returns port, already_running flag, or error."""
+        try:
+            body = json.loads(txt)
+        except json.JSONDecodeError:
+            return {"error": f"invalid JSON ({status}): {txt[:200]}"}
+
+        data = body.get("data") or {}
+        raw_port = data.get("port")
+        if raw_port is not None:
+            try:
+                return {"port": int(raw_port)}
+            except (TypeError, ValueError):
+                return {"error": f"invalid port in response: {raw_port!r}"}
+
+        status_block = body.get("status") or {}
+        err_code = str(status_block.get("error_code") or "")
+        message = str(status_block.get("message") or txt[:200])
+        if status in (400, 500) and (
+            "ALREADY_RUNNING" in err_code
+            or "ALREADY_RUNNING" in txt
+            or "browser process is running" in message.lower()
+        ):
+            return {"already_running": True}
+
+        if err_code:
+            return {"error": f"{err_code}: {message}"}
+        if status not in (200, 201):
+            return {"error": f"HTTP {status}: {message}"}
+        return {"error": f"no port in MLX response: {txt[:200]}"}
+
+    async def _launcher_stop_profile(self, profile_id: str) -> None:
+        """Stop profile via MLX launcher (releases lock) and kill stray chrome."""
+        path = f"/api/v1/profile/stop/p/{profile_id}"
+        try:
+            status, txt = await self._call_launcher(path)
+            log.info("[MLX] launcher stop %s → %s: %s", profile_id[:8], status, txt[:120])
+        except Exception as e:
+            log.warning("[MLX] launcher stop failed for %s: %s", profile_id[:8], e)
+        await self._kill_profile_browser(profile_id)
+
     async def start_profile(self, profile_id: str) -> dict:
         """
         Start MLX profile with CDP debug port accessible to nodriver.
 
-        Flow:
-        1. Kill any existing browser for this profile
-        2. Start via MLX API (chrome starts WITHOUT --remote-debugging-port)
-        3. Find the running chrome process via --client-session-id in cmdline
-        4. Kill chrome
-        5. Re-launch with same cmdline + --remote-debugging-port=PORT
-        6. Verify and return PORT
+        Uses MLX launcher automation_type=puppeteer — the API returns data.port
+        (dynamic CDP port). Do NOT kill/relaunch chrome manually; MLX respawns
+        without a debug port if we do that.
         """
         await self._get_token()
         folder = self.folder_id or "no-folder"
-        cdp_port = _profile_cdp_port(profile_id)
+        path = (
+            f"/api/v2/profile/f/{folder}/p/{profile_id}/start"
+            f"?automation_type=puppeteer&headless_mode=false"
+        )
 
-        log.info(f"[MLX] starting profile {profile_id[:8]} → CDP port {cdp_port}")
+        log.info("[MLX] starting profile %s via puppeteer automation", profile_id[:8])
 
-        # Step 1: Kill any existing process for this profile
-        await self._kill_profile_browser(profile_id)
-        await asyncio.sleep(1.5)
+        last_error = "unknown error"
+        for attempt in range(2):
+            status, txt = await self._call_launcher(path)
+            parsed = self._parse_launcher_start_response(status, txt)
 
-        # Step 2: Start via MLX API
-        path = f"/api/v2/profile/f/{folder}/p/{profile_id}/start?automation_type=cdp"
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"{LAUNCHER_HTTP}{path}",
-                                  headers=self._auth_header(),
-                                  timeout=aiohttp.ClientTimeout(total=60)) as r:
-                    txt = await r.text()
-                    log.info(f"[MLX] start response ({r.status}): {txt[:150]}")
-                    if r.status not in (200, 400):  # 400 = ALREADY_RUNNING (ok)
-                        raise RuntimeError(f"start_profile failed ({r.status}): {txt[:200]}")
-        except aiohttp.ClientConnectorError:
-            connector = aiohttp.TCPConnector(ssl=_SSL_CTX)
-            async with aiohttp.ClientSession(connector=connector) as s:
-                async with s.get(f"{LAUNCHER_HTTPS}{path}",
-                                  headers=self._auth_header(),
-                                  ssl=_SSL_CTX,
-                                  timeout=aiohttp.ClientTimeout(total=60)) as r:
-                    txt = await r.text()
-                    log.info(f"[MLX] start HTTPS ({r.status}): {txt[:150]}")
+            if parsed.get("already_running") and attempt == 0:
+                log.warning(
+                    "[MLX] profile %s already running — stopping via launcher then retrying",
+                    profile_id[:8],
+                )
+                await self._launcher_stop_profile(profile_id)
+                await asyncio.sleep(4)
+                continue
 
-        # Step 3: Wait for chrome to initialize
-        log.info("[MLX] waiting for chrome to initialize...")
-        await asyncio.sleep(4)
+            if "port" in parsed:
+                cdp_port = parsed["port"]
+                log.info("[MLX] launcher returned CDP port %s for %s", cdp_port, profile_id[:8])
+                if await self._verify_cdp_with_retry(cdp_port, timeout=45):
+                    return {
+                        "code": 0,
+                        "data": {
+                            "cdpPort": cdp_port,
+                            "cdpEndpoint": f"http://127.0.0.1:{cdp_port}",
+                        },
+                    }
+                last_error = f"CDP port {cdp_port} not accessible (profile {profile_id[:8]})"
+                break
 
-        # Step 4: Get chrome PID + cmdline via --client-session-id
-        chrome_pid, chrome_cmd = await self._get_chrome_info(profile_id)
-        if not chrome_cmd:
-            raise RuntimeError(f"MLX started but chrome not found for profile {profile_id[:8]}")
+            last_error = parsed.get("error") or f"start failed ({status}): {txt[:200]}"
+            break
 
-        log.info(f"[MLX] found chrome PID={chrome_pid}")
-
-        # Step 5: Kill chrome (no debug port)
-        await self._kill_pid(chrome_pid)
-        await asyncio.sleep(2)
-
-        # Step 6: Re-launch with --remote-debugging-port added
-        new_cmd = re.sub(r'--remote-debugging-port=\d+\s?', '', chrome_cmd).strip()
-        new_cmd += f" --remote-debugging-port={cdp_port}"
-        log.info(f"[MLX] re-launching with CDP port {cdp_port}")
-        subprocess.Popen(new_cmd, shell=True,
-                         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-
-        log.info(f"[MLX] profile {profile_id[:8]} → CDP port {cdp_port}")
-
-        # Step 5: Verify CDP is accessible
-        ok = await self._verify_cdp(cdp_port)
-        if not ok:
-            await asyncio.sleep(3)
-            ok = await self._verify_cdp(cdp_port)
-        if not ok:
-            raise RuntimeError(f"CDP port {cdp_port} not accessible (profile {profile_id[:8]})")
-
-        return {
-            "code": 0,
-            "data": {
-                "cdpPort":     cdp_port,
-                "cdpEndpoint": f"http://127.0.0.1:{cdp_port}",
-            },
-        }
+        raise RuntimeError(last_error)
 
     async def _detect_cdp_port(self, profile_id: str) -> int:
         """Read --remote-debugging-port from running chrome cmdline for this profile."""
@@ -307,30 +452,105 @@ class MultiloginProvider:
             log.debug(f"[MLX] _scan_cdp_ports error: {e}")
         return 0
 
-    async def _get_chrome_info(self, profile_id: str):
-        """Get PID and cmdline of MLX main chrome process for this profile.
-        MLX puts the profile ID in --client-session-id=PROFILE_ID flag."""
-        # Use PowerShell to find chrome with matching --client-session-id
-        # (MLX always sets this flag; no --type= means it's the main process)
+    def _find_main_chrome_process(
+        self, profile_id: str, pairs: list[tuple[int, str]]
+    ) -> tuple[int | None, str | None]:
+        """Return the main (non-renderer) chrome process for a profile."""
+        needle = f"client-session-id={profile_id}"
+        for pid, cmd in pairs:
+            if needle in cmd and "--type=" not in cmd:
+                return pid, cmd
+        return None, None
+
+    async def _get_chrome_info_ps(self, profile_id: str) -> tuple[int | None, str | None]:
+        """PowerShell fallback when WMIC parsing fails or returns nothing."""
         ps_cmd = (
-            f"Get-WmiObject Win32_Process -Filter \"Name='chrome.exe'\" | "
-            f"Where-Object {{ $_.CommandLine -match 'client-session-id={profile_id}' "
-            f"-and $_.CommandLine -notmatch '--type=' }} | "
-            f"Select-Object -First 1 ProcessId,CommandLine | ConvertTo-Json"
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+            f"Where-Object {{ $_.CommandLine -like '*client-session-id={profile_id}*' "
+            "-and $_.CommandLine -notlike '*--type=*' }} | "
+            "Select-Object -First 1 ProcessId, CommandLine | ConvertTo-Json -Compress"
         )
         try:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True, text=True, timeout=15
+                capture_output=True,
+                text=True,
+                timeout=20,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
-            if result.stdout.strip():
-                obj = json.loads(result.stdout.strip())
-                if obj and "ProcessId" in obj:
-                    return int(obj["ProcessId"]), obj["CommandLine"]
+            if not result.stdout.strip():
+                return None, None
+            obj = json.loads(result.stdout.strip())
+            if isinstance(obj, dict):
+                pid = obj.get("ProcessId")
+                cmd = obj.get("CommandLine") or ""
+                if pid and cmd:
+                    return int(pid), cmd
         except Exception as e:
-            log.debug(f"[MLX] _get_chrome_info error: {e}")
-
+            log.debug("[MLX] _get_chrome_info_ps error: %s", e)
         return None, None
+
+    async def _get_chrome_info(self, profile_id: str):
+        """Get PID and cmdline of MLX main chrome process for this profile.
+        MLX puts the profile ID in --client-session-id=PROFILE_ID flag.
+        """
+        stdout = _run_wmic_chrome_processes(timeout=30)
+        pid, cmd = self._find_main_chrome_process(profile_id, _parse_wmic_process_pairs(stdout))
+        if cmd:
+            return pid, cmd
+
+        log.debug("[MLX] wmic missed chrome for %s — trying PowerShell fallback", profile_id[:8])
+        return await self._get_chrome_info_ps(profile_id)
+
+    def _relaunch_chrome_detached(self, cmdline: str) -> None:
+        """
+        Relaunch Chrome completely detached from Python — Windows-safe.
+        Uses DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP so Chrome stays alive
+        after Python exits. cmd.exe /c start /B runs it as background job.
+        """
+        try:
+            # Method 1: Proper Windows detached process
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            DETACHED_PROCESS         = 0x00000008
+            subprocess.Popen(
+                cmdline,
+                shell=True,
+                creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            log.info("[MLX] Chrome relaunched (detached)")
+        except Exception as e:
+            log.error(f"[MLX] Chrome relaunch error: {e}")
+            # Method 2: Start via cmd /c start (fully detached job)
+            try:
+                safe_cmd = cmdline.replace('"', '\\"')
+                subprocess.Popen(
+                    f'cmd /c start "" {safe_cmd}',
+                    shell=True,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                log.info("[MLX] Chrome relaunched (cmd start fallback)")
+            except Exception as e2:
+                log.error(f"[MLX] Chrome relaunch fallback also failed: {e2}")
+
+    async def _chrome_alive_after_relaunch(self, profile_id: str) -> bool:
+        """Returns True if chrome is running for this profile."""
+        stdout = _run_wmic_chrome_processes(timeout=15)
+        pid, cmd = self._find_main_chrome_process(profile_id, _parse_wmic_process_pairs(stdout))
+        if cmd:
+            log.info(f"[MLX] post-relaunch chrome alive (PID={pid})")
+            return True
+        # PS fallback
+        pid, cmd = await self._get_chrome_info_ps(profile_id)
+        alive = bool(cmd)
+        log.info(f"[MLX] post-relaunch chrome alive (PS): {alive}")
+        return alive
 
     async def _kill_pid(self, pid) -> None:
         """Kill a specific PID."""
@@ -345,35 +565,81 @@ class MultiloginProvider:
 
     async def _kill_profile_browser(self, profile_id: str) -> None:
         """Kill all MLX browser processes for this profile (matched by --client-session-id)."""
-        try:
+        needle = f"client-session-id={profile_id}"
+        stdout = _run_wmic_chrome_processes(timeout=30)
+        pids = [
+            str(pid)
+            for pid, cmd in _parse_wmic_process_pairs(stdout)
+            if cmd and needle in cmd
+        ]
+
+        if not pids:
             ps_cmd = (
-                f"Get-WmiObject Win32_Process -Filter \"Name='chrome.exe'\" | "
-                f"Where-Object {{ $_.CommandLine -match 'client-session-id={profile_id}' }} | "
-                f"ForEach-Object {{ $_.Terminate() }}"
+                "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+                f"Where-Object {{ $_.CommandLine -like '*client-session-id={profile_id}*' }} | "
+                "Select-Object -ExpandProperty ProcessId"
             )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True, timeout=10
-            )
-            log.info(f"[MLX] killed browser processes for {profile_id[:8]}")
-        except Exception as e:
-            log.debug(f"[MLX] kill profile browser error: {e}")
+            try:
+                result = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+                pids = [p.strip() for p in result.stdout.splitlines() if p.strip().isdigit()]
+            except Exception as e:
+                log.debug("[MLX] kill profile browser PS fallback error: %s", e)
+
+        if not pids:
+            log.info("[MLX] no chrome processes to kill for %s", profile_id[:8])
+            return
+
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", pid, "/F", "/T"],
+                    capture_output=True,
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+            except Exception:
+                pass
+        log.info("[MLX] killed %d browser process(es) for %s", len(pids), profile_id[:8])
 
     async def _verify_cdp(self, port: int) -> bool:
-        """Check if CDP is accessible on given port."""
+        """Check if Chrome CDP is accessible on given port (ignore non-Chrome endpoints)."""
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.get(f"http://127.0.0.1:{port}/json/version",
-                                  timeout=aiohttp.ClientTimeout(total=3)) as r:
-                    return r.status == 200
+                async with s.get(
+                    f"http://127.0.0.1:{port}/json/version",
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as r:
+                    if r.status != 200:
+                        return False
+                    data = await r.json(content_type=None)
+                    browser = str(data.get("Browser", ""))
+                    if "Chrome" in browser or "Chromium" in browser:
+                        return True
+                    log.debug("[MLX] port %s is not Chrome CDP (Browser=%s)", port, browser)
+                    return False
         except Exception:
             return False
+
+    async def _verify_cdp_with_retry(self, port: int, timeout: int = 20) -> bool:
+        """Poll CDP endpoint until reachable or timeout (seconds)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if await self._verify_cdp(port):
+                return True
+            await asyncio.sleep(2)
+        return False
 
     # ── Stop profile ──────────────────────────────────────────────────────────
 
     async def stop_profile(self, profile_id: str) -> dict:
-        """Stop profile by killing its chrome processes."""
-        await self._kill_profile_browser(profile_id)
+        """Stop profile via MLX launcher API and kill stray chrome processes."""
+        await self._launcher_stop_profile(profile_id)
         return {"code": 0, "message": "stopped"}
 
     # ── Create profile ────────────────────────────────────────────────────────

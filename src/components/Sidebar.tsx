@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Settings, Tv, Calendar, Gamepad2, BarChart3,
   MessageSquare, Shuffle, Link, MonitorPlay, Zap, FileText,
-  Cpu, Mail, Server, Shield,
+  Cpu, Mail, Server, Shield, RefreshCw,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { backendFetch } from '../services/backendOrigin';
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { group: 'AUTOMATION', items: [
     { id: 'analytics',    label: 'Analytics',     icon: BarChart3 },
     { id: 'engagement',   label: 'Engagement',    icon: Zap },
+    { id: 'recycle',      label: 'Recycle Control',icon: RefreshCw },
     { id: 'channels',     label: 'Channels',      icon: Tv },
     { id: 'backlinks',    label: 'Backlinks',     icon: Link },
     { id: 'comments',     label: 'Comments',      icon: MessageSquare },

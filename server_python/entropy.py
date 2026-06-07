@@ -37,6 +37,8 @@ from server_python.human_engine import (
 )
 from server_python.yt_types import VideoTarget, YouTubeManagerError
 
+from server_python.behavior.youtube.selectors import DESKTOP
+
 # ---------------------------------------------------------------------------
 # KEYWORD POOL — 15 different keyword variants for the target video
 # ---------------------------------------------------------------------------
@@ -66,8 +68,8 @@ CHANNEL_SEARCH_VARIATIONS: tuple[str, ...] = (
     "{channel} videos",
 )
 
-# Desktop search selectors — ordered by reliability
-DESKTOP_SEARCH_SELECTORS = (
+# Desktop search — V2 single source of truth
+DESKTOP_SEARCH_SELECTORS = DESKTOP.get("search_input", (
     'input[role="combobox"]',
     'input[aria-label="Search"]',
     '[role="search"] input',
@@ -75,13 +77,13 @@ DESKTOP_SEARCH_SELECTORS = (
     'input[name="search_query"]',
     'ytd-searchbox input#search',
     'input[aria-label*="Search"]',
-)
+))
 
-DESKTOP_RESULT_SELECTORS = (
+DESKTOP_RESULT_SELECTORS = DESKTOP.get("search_results_video", (
     'ytd-video-renderer',
     'ytd-item-section-renderer ytd-video-renderer',
     '#contents ytd-video-renderer',
-)
+))
 
 
 class EntryPathKind(str, Enum):
@@ -481,10 +483,11 @@ class BehavioralEntropyEngine:
     Har profile ka apna unique behavioral pattern hota hai.
     """
 
-    def __init__(self, profile_id: str, rng: Any, log: Any) -> None:
+    def __init__(self, profile_id: str, rng: Any, log: Any, wake_fn: Any = None) -> None:
         self._profile_id = profile_id
         self._rng = rng
         self._log = log
+        self._wake_fn = wake_fn
         self._personality = BehavioralPersonality.from_profile_id(profile_id)
         self._log(
             f"[Entropy] Personality={self._personality.personality_type.value} "
@@ -524,6 +527,7 @@ class BehavioralEntropyEngine:
         Fallback chain: B → A, C → A, D → A
         Returns True if target video found & clicked.
         """
+        await self._wake("entropy-execute")
         path = self.select_path()
 
         if path == EntryPathKind.KEYWORD_SEARCH:
@@ -557,14 +561,19 @@ class BehavioralEntropyEngine:
                 return await self._path_a_keyword_search(tab, target)
             return result
 
-    async def execute_for_source(self, tab: Tab, target: VideoTarget, source: str = "") -> bool:
-        """
-        Honour Engagement page source override.
-        direct → False (caller opens watch URL directly)
-        search → Path A multi-keyword only
-        homepage / notification → forced path with Path A fallback
-        empty → personality-weighted random path (default execute)
-        """
+    async def _wake(self, reason: str) -> None:
+        if not self._wake_fn:
+            return
+        try:
+            await self._wake_fn(reason)
+        except Exception as exc:
+            self._log(f"[AntiSleep] wake warn ({reason}): {exc}")
+
+    async def execute_for_source(self, tab: Tab, target: VideoTarget, source: str = "", wake_fn: Any = None) -> bool:
+        """Honour Engagement source override; wake profile before navigation."""
+        if wake_fn is not None:
+            self._wake_fn = wake_fn
+        await self._wake("nav-start")
         s = (source or "").strip().lower()
         if s == "direct":
             self._log("[Entropy] Source=direct — skipping organic navigation")
@@ -592,6 +601,7 @@ class BehavioralEntropyEngine:
         return await self.execute(tab, target)
 
     async def _ensure_home(self, tab: Tab) -> None:
+        await self._wake("ensure-home")
         try:
             url = str(tab.url or "")
             if "youtube.com" in url and "/watch" not in url and "/results" not in url:
@@ -675,15 +685,8 @@ class BehavioralEntropyEngine:
     # ── PATH A: Smart Keyword Search ──────────────────────────────────────────
 
     async def _path_a_keyword_search(self, tab: Tab, target: VideoTarget) -> bool:
-        """
-        Smart per-profile unique keyword search.
-
-        Keyword pool order (per-profile seeded, so same video → different order for each profile):
-          1. AI persona-based keyword (unique to this profile's viewer persona)
-          2. Profile-seeded shuffled base variants (2-3 keywords)
-          3. Exact title + channel as LAST guaranteed keyword
-        Early exit: video found at keyword #1 → never try #2, #3...
-        """
+        """Smart per-profile unique keyword search."""
+        await self._wake("search-path-a")
         title = target.title_hint or target.video_id or "video"
         channel = target.channel_name or ""
         profile_seed = self._get_profile_seed()
@@ -773,6 +776,7 @@ class BehavioralEntropyEngine:
     async def _search_with_keyword(self, tab: Tab, keyword: str, target: VideoTarget) -> bool:
         from server_python.yt_types import ElementNotFoundError
 
+        await self._wake(f"search:{keyword[:40]}")
         search_el = await self._find_search_bar(tab, "entropy_search_bar")
         if not search_el:
             self._log("[PathA] Search bar not found")
@@ -794,9 +798,9 @@ class BehavioralEntropyEngine:
 
         await self._wait_for_results(tab)
 
-        # Wait for result cards in DOM (longer for slow proxy)
+        # Wait for result cards in DOM (longer for slow proxy / MLX)
         results_found = None
-        for _wait in range(6):
+        for _wait in range(12):
             results_found = await _js_find_selector(tab, DESKTOP_RESULT_SELECTORS)
             if results_found:
                 break
@@ -887,6 +891,7 @@ class BehavioralEntropyEngine:
     # ── PATH B: Channel Search ─────────────────────────────────────────────────
 
     async def _path_b_channel_search(self, tab: Tab, target: VideoTarget) -> bool:
+        await self._wake("search-path-b")
         self._log(f"[PathB] Channel search | channel={target.channel_name!r}")
         if not target.channel_name:
             self._log("[PathB] No channel_name — skipping")
@@ -1027,6 +1032,7 @@ class BehavioralEntropyEngine:
     # ── PATH C: Homepage Browse ────────────────────────────────────────────────
 
     async def _path_c_homepage_browse(self, tab: Tab, target: VideoTarget) -> bool:
+        await self._wake("search-path-c")
         self._log("[PathC] Homepage browse path")
 
         current = str(tab.url or "")
@@ -1084,6 +1090,7 @@ class BehavioralEntropyEngine:
         Entry via notification bell → panel → click target video.
         Uses NotificationPath class. Falls back to False on any failure.
         """
+        await self._wake("search-path-d")
         self._log(f"[PathD] Notification path | video={target.video_id!r}")
         try:
             from server_python.notification_path import NotificationPath

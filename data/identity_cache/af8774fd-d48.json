@@ -1,0 +1,18 @@
+{
+  "profile_id": "af8774fd-d489-4a6f-ba9b-4d67b701d058",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Atlanta",
+  "timezone": "America/New_York",
+  "lat": 33.7485,
+  "lon": -84.3871,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1280,
+  "screen_height": 800,
+  "noise_seed": 3581128698,
+  "canvas_noise": 0.002232,
+  "webgl_noise": 0.002129,
+  "audio_noise": 8.605e-05,
+  "cached_at": 1780629798.0183048
+}

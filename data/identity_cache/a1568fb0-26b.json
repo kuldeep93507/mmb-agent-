@@ -1,0 +1,18 @@
+{
+  "profile_id": "a1568fb0-26b2-449c-8302-7d2e308b9932",
+  "country_code": "CU",
+  "country": "Cuba",
+  "city": "Havana",
+  "timezone": "America/Havana",
+  "lat": 23.1392,
+  "lon": -82.3906,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 1881205196,
+  "canvas_noise": 0.007538,
+  "webgl_noise": 0.002355,
+  "audio_noise": 8.439e-05,
+  "cached_at": 1780580644.707002
+}

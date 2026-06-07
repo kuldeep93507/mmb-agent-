@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMB Agent — Pro Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ══ TOPBAR ═════════════════════════════════════════════════════════════ */
+.topbar {
+  height: 54px; background: #111118; border-bottom: 1px solid #1e1e2e;
+  display: flex; align-items: center; padding: 0 20px; gap: 14px;
+  flex-shrink: 0; z-index: 100;
+}
+.topbar-logo { display: flex; align-items: center; gap: 10px; }
+.topbar-logo .logo-icon {
+  width: 32px; height: 32px; background: #e50914; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; font-weight: 900; color: #fff;
+}
+.topbar-logo h1 { font-size: 1rem; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
+.topbar-logo .ver { font-size: 0.65rem; color: #555; margin-left: 4px; }
+
+.topbar-sep { flex: 1; }
+
+.top-bot-status { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 20px; background: #1a1a24; border: 1px solid #2a2a3a; }
+.top-bot-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+.top-bot-dot.live { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; animation: pulse 2s infinite; }
+.top-bot-label { font-size: 0.75rem; color: #888; }
+.top-bot-label.live { color: #2ecc71; }
+
+.topbar-btn {
+  padding: 7px 16px; border-radius: 8px; border: none; cursor: pointer;
+  font-size: 0.8rem; font-weight: 600; transition: 0.15s;
+}
+.tb-start { background: #1a7a3a; color: #fff; }
+.tb-start:hover { background: #1d8f42; }
+.tb-stop  { background: #8b1a1a; color: #fff; display: none; }
+.tb-stop:hover  { background: #a82020; }
+
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+/* ══ LAYOUT ═════════════════════════════════════════════════════════════ */
+.app-body { display: flex; flex: 1; overflow: hidden; height: calc(100vh - 54px); }
+
+/* ══ SIDEBAR ════════════════════════════════════════════════════════════ */
+.sidebar {
+  width: 220px; min-width: 220px; background: #0e0e18;
+  border-right: 1px solid #1a1a2a; display: flex; flex-direction: column;
+  padding: 16px 10px; gap: 2px; overflow-y: auto;
+}
+.sidebar-section { font-size: 0.62rem; color: #3a3a5a; text-transform: uppercase; letter-spacing: 1.5px; padding: 10px 10px 6px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border-radius: 8px; cursor: pointer; transition: 0.15s; color: #888;
+  font-size: 0.82rem; font-weight: 500; border: none; background: none; width: 100%; text-align: left;
+}
+.nav-item .nav-icon { font-size: 1rem; flex-shrink: 0; }
+.nav-item:hover { background: #1a1a2a; color: #ccc; }
+.nav-item.active { background: #1a0a12; color: #ff4466; border-left: 2px solid #e50914; }
+.nav-item.active .nav-icon { filter: none; }
+.nav-badge { margin-left: auto; font-size: 0.65rem; padding: 1px 6px; border-radius: 8px; font-weight: 700; }
+.nb-red { background: #3a0a0a; color: #e74c3c; }
+.nb-green { background: #0a2a14; color: #2ecc71; }
+.nb-gray { background: #1e1e2e; color: #555; }
+
+.sidebar-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid #1a1a2a; }
+
+/* ══ MAIN CONTENT ═══════════════════════════════════════════════════════ */
+.main-content { flex: 1; overflow-y: auto; background: #0d0d16; }
+.page { display: none; padding: 28px; min-height: 100%; }
+.page.active { display: block; }
+
+/* ══ COMMON COMPONENTS ══════════════════════════════════════════════════ */
+.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.page-title { font-size: 1.3rem; font-weight: 700; color: #fff; }
+.page-subtitle { font-size: 0.78rem; color: #555; margin-top: 3px; }
+.page-actions { display: flex; gap: 8px; }
+
+.btn {
+  padding: 8px 16px; border-radius: 7px; border: none; cursor: pointer;
+  font-size: 0.8rem; font-weight: 600; transition: 0.15s; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary { background: #e50914; color: #fff; }
+.btn-primary:hover { background: #c4070f; }
+.btn-success { background: #1a7a3a; color: #fff; }
+.btn-success:hover { background: #1d8f42; }
+.btn-danger  { background: #7a1a1a; color: #fff; }
+.btn-danger:hover  { background: #961e1e; }
+.btn-ghost   { background: #1a1a2a; color: #888; border: 1px solid #2a2a3a; }
+.btn-ghost:hover { background: #222230; color: #ccc; }
+.btn-sm { padding: 5px 10px; font-size: 0.72rem; }
+
+.stat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card {
+  background: #111120; border: 1px solid #1e1e30; border-radius: 10px;
+  padding: 16px 18px; position: relative; overflow: hidden;
+}
+.stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+.stat-card.red::before { background: #e50914; }
+.stat-card.green::before { background: #2ecc71; }
+.stat-card.blue::before { background: #3498db; }
+.stat-card.yellow::before { background: #f39c12; }
+.stat-card.purple::before { background: #9b59b6; }
+.stat-label { font-size: 0.68rem; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.stat-value { font-size: 1.8rem; font-weight: 800; color: #fff; line-height: 1; }
+.stat-sub { font-size: 0.72rem; color: #555; margin-top: 5px; }
+.stat-icon { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 2rem; opacity: 0.08; }
+
+.card { background: #111120; border: 1px solid #1e1e30; border-radius: 10px; overflow: hidden; }
+.card-header { padding: 14px 18px; border-bottom: 1px solid #1a1a28; display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-size: 0.82rem; font-weight: 700; color: #ccc; text-transform: uppercase; letter-spacing: 0.5px; }
+.card-body { padding: 16px 18px; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th { font-size: 0.68rem; color: #444; text-transform: uppercase; letter-spacing: 1px; padding: 8px 12px; border-bottom: 1px solid #1a1a28; text-align: left; }
+.table td { padding: 10px 12px; border-bottom: 1px solid #111; font-size: 0.8rem; color: #bbb; vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+.table tr:hover td { background: #141422; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 0.65rem; font-weight: 700; }
+.badge-red    { background: #2a0808; color: #e74c3c; }
+.badge-green  { background: #082a12; color: #2ecc71; }
+.badge-yellow { background: #2a1e00; color: #f39c12; }
+.badge-blue   { background: #08182a; color: #5ba3d4; }
+.badge-gray   { background: #1a1a1a; color: #666; }
+.badge-purple { background: #1a0828; color: #a78bfa; }
+
+.toggle { position: relative; width: 38px; height: 22px; cursor: pointer; }
+.toggle input { display: none; }
+.toggle-track { position: absolute; inset: 0; background: #2a2a3a; border-radius: 11px; transition: 0.2s; }
+.toggle input:checked ~ .toggle-track { background: #1a7a3a; }
+.toggle-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.toggle input:checked ~ .toggle-thumb { left: 19px; }
+
+.input {
+  background: #0e0e18; border: 1px solid #2a2a3a; color: #e0e0e0;
+  padding: 8px 12px; border-radius: 7px; font-size: 0.8rem; outline: none; width: 100%;
+}
+.input:focus { border-color: #e50914; }
+.input-sm { padding: 5px 10px; font-size: 0.75rem; }
+
+.select {
+  background: #0e0e18; border: 1px solid #2a2a3a; color: #e0e0e0;
+  padding: 7px 10px; border-radius: 7px; font-size: 0.8rem; outline: none;
+}
+.select:focus { border-color: #e50914; }
+
+.label { font-size: 0.72rem; color: #666; display: block; margin-bottom: 4px; }
+
+.empty-state { text-align: center; padding: 60px 0; color: #333; }
+.empty-state .es-icon { font-size: 3rem; margin-bottom: 12px; }
+.empty-state .es-text { font-size: 0.88rem; color: #555; }
+
+.toast {
+  position: fixed; bottom: 24px; right: 24px; padding: 10px 20px;
+  border-radius: 8px; font-size: 0.82rem; opacity: 0;
+  transition: opacity 0.3s; pointer-events: none; z-index: 9999;
+  background: #1a7a3a; color: #fff;
+}
+.toast.show { opacity: 1; }
+.toast.error { background: #7a1a1a; }
+
+.sep { height: 1px; background: #1a1a28; margin: 18px 0; }
+
+/* ══ DASHBOARD PAGE ═════════════════════════════════════════════════════ */
+.activity-feed { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+.activity-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px; background: #0e0e18; font-size: 0.75rem; }
+.activity-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.ad-green  { background: #2ecc71; }
+.ad-red    { background: #e74c3c; }
+.ad-yellow { background: #f39c12; }
+.ad-blue   { background: #3498db; }
+.activity-time { color: #444; margin-left: auto; flex-shrink: 0; }
+
+/* ══ PROFILES PAGE ══════════════════════════════════════════════════════ */
+.pf-filters { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.filter-chip { padding: 4px 12px; border-radius: 14px; border: 1px solid #2a2a3a; background: #111120; color: #666; font-size: 0.72rem; cursor: pointer; transition: 0.15s; }
+.filter-chip.active, .filter-chip:hover { background: #1e0a12; color: #ff4466; border-color: #e50914; }
+.pf-count { font-size: 0.72rem; color: #444; margin-left: auto; }
+
+.pf-list { display: flex; flex-direction: column; gap: 8px; }
+.pf-row {
+  background: #111120; border: 1px solid #1e1e30; border-radius: 9px;
+  overflow: hidden; transition: border-color 0.2s;
+}
+.pf-row:hover { border-color: #2a2a40; }
+.pf-row.has-error { border-left: 3px solid #e74c3c; }
+.pf-row.is-running { border-left: 3px solid #2ecc71; }
+
+.pf-row-main {
+  display: grid; grid-template-columns: 42px 1fr auto auto;
+  gap: 12px; padding: 12px 16px; align-items: center; cursor: pointer;
+}
+.pf-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, #1a1030, #2a1020);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem; font-weight: 800; color: #c9a227; font-family: monospace;
+}
+.pf-info-block {}
+.pf-name { font-size: 0.88rem; font-weight: 700; color: #ddd; margin-bottom: 4px; display: flex; align-items: center; gap: 7px; }
+.pf-meta-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.pf-meta { font-size: 0.7rem; color: #555; display: flex; align-items: center; gap: 3px; }
+.pf-stats-block { display: flex; gap: 14px; align-items: center; }
+.pf-stat-mini { text-align: center; }
+.pf-stat-mini .val { font-size: 1rem; font-weight: 700; color: #ddd; }
+.pf-stat-mini .lbl { font-size: 0.62rem; color: #444; text-transform: uppercase; }
+.pf-actions-block { display: flex; gap: 6px; align-items: center; }
+
+.pf-expand { display: none; padding: 14px 16px; background: #0a0a14; border-top: 1px solid #1a1a28; }
+.pf-expand.open { display: block; }
+.pf-error-box {
+  background: #1a0808; border: 1px solid #3a1010; border-radius: 6px;
+  padding: 8px 12px; font-size: 0.72rem; color: #e57373; font-family: monospace;
+  margin-bottom: 12px; white-space: pre-wrap; word-break: break-all;
+}
+.proxy-grid { display: grid; grid-template-columns: 1fr 90px 1fr 1fr; gap: 8px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+
+/* ══ CHANNELS PAGE ══════════════════════════════════════════════════════ */
+.channel-scan-box { display: flex; gap: 8px; margin-bottom: 20px; }
+.channels-list { display: flex; flex-direction: column; gap: 8px; }
+.ch-row {
+  background: #111120; border: 1px solid #1e1e30; border-radius: 9px;
+  overflow: hidden; cursor: pointer;
+}
+.ch-row-main {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+}
+.ch-avatar {
+  width: 40px; height: 40px; border-radius: 50%; background: #e50914;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; flex-shrink: 0;
+}
+.ch-info { flex: 1; min-width: 0; }
+.ch-name { font-size: 0.88rem; font-weight: 700; color: #ddd; margin-bottom: 3px; }
+.ch-meta { font-size: 0.72rem; color: #555; }
+.ch-videos-section { display: none; border-top: 1px solid #1a1a28; background: #0a0a14; }
+.ch-videos-section.open { display: block; }
+.ch-video-row { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid #111; }
+.ch-video-row:last-child { border-bottom: none; }
+.ch-vthumb { width: 64px; height: 36px; border-radius: 4px; object-fit: cover; background: #1a1a24; flex-shrink: 0; }
+.ch-vtitle { flex: 1; font-size: 0.78rem; color: #bbb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-vdate { font-size: 0.68rem; color: #444; flex-shrink: 0; }
+
+/* ══ JOBS PAGE ══════════════════════════════════════════════════════════ */
+.jobs-list { display: flex; flex-direction: column; gap: 8px; }
+.job-row {
+  background: #111120; border: 1px solid #1e1e30; border-radius: 9px;
+  display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+  transition: border-color 0.2s;
+}
+.job-row.disabled { opacity: 0.4; }
+.job-thumb { width: 96px; height: 54px; border-radius: 6px; object-fit: cover; background: #1a1a24; flex-shrink: 0; }
+.job-info { flex: 1; min-width: 0; }
+.job-title { font-size: 0.88rem; font-weight: 600; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+.job-meta { display: flex; gap: 10px; flex-wrap: wrap; }
+.job-tag { font-size: 0.68rem; padding: 2px 7px; border-radius: 6px; }
+.jt-ch  { background: #0a1828; color: #5ba3d4; }
+.jt-id  { background: #1a140a; color: #c9a227; font-family: monospace; }
+.job-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.views-input { width: 52px; background: #0a0a14; border: 1px solid #2a2a3a; color: #e0e0e0; padding: 4px 6px; border-radius: 5px; font-size: 0.78rem; text-align: center; }
+
+/* ══ SCHEDULER PAGE ════════════════════════════════════════════════════ */
+.schedule-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.sch-row {
+  background: #111120; border: 1px solid #1e1e30; border-radius: 9px;
+  padding: 14px 18px; display: flex; align-items: center; gap: 14px;
+}
+.sch-info { flex: 1; }
+.sch-name { font-size: 0.9rem; font-weight: 700; color: #ddd; margin-bottom: 5px; }
+.sch-meta { font-size: 0.72rem; color: #555; }
+.sch-actions { display: flex; gap: 6px; }
+.progress-bar { height: 4px; background: #1a1a28; border-radius: 2px; margin-top: 8px; }
+.progress-bar-fill { height: 100%; background: #2ecc71; border-radius: 2px; transition: 0.5s; }
+
+/* ══ ANALYTICS PAGE ════════════════════════════════════════════════════ */
+.analytics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.mini-chart { height: 60px; display: flex; align-items: flex-end; gap: 3px; padding: 8px 0 0; }
+.mini-bar { flex: 1; background: #e50914; border-radius: 2px 2px 0 0; opacity: 0.7; min-height: 4px; }
+
+/* ══ LOGS PAGE ══════════════════════════════════════════════════════════ */
+.log-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.log-box {
+  background: #060610; border: 1px solid #1a1a28; border-radius: 8px;
+  padding: 14px; font-family: 'Consolas', monospace; font-size: 0.72rem;
+  line-height: 1.6; color: #5ba3d4; height: calc(100vh - 220px);
+  overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.log-err  { color: #e57373; }
+.log-warn { color: #ffb74d; }
+.log-ok   { color: #81c784; }
+.log-dim  { color: #333; }
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-logo">
+    <div class="logo-icon">M</div>
+    <h1>MMB Agent <span class="ver">v2.0</span></h1>
+  </div>
+  <div class="topbar-sep"></div>
+  <div class="top-bot-status">
+    <div class="top-bot-dot" id="topDot"></div>
+    <span class="top-bot-label" id="topLabel">Bot Offline</span>
+  </div>
+  <button class="topbar-btn tb-start" id="tbStart" onclick="quickBotStart()">▶ Start Bot</button>
+  <button class="topbar-btn tb-stop"  id="tbStop"  onclick="quickBotStop()">⏹ Stop Bot</button>
+</div>
+
+<!-- BODY -->
+<div class="app-body">
+
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">Main</div>
+    <button class="nav-item active" onclick="navTo('dashboard', this)">
+      <span class="nav-icon">📊</span> Dashboard
+    </button>
+    <button class="nav-item" onclick="navTo('profiles', this)">
+      <span class="nav-icon">👤</span> Profiles
+      <span class="nav-badge nb-gray" id="nav-badge-profiles">—</span>
+    </button>
+
+    <div class="sidebar-section">Content</div>
+    <button class="nav-item" onclick="navTo('channels', this)">
+      <span class="nav-icon">📺</span> Channels
+    </button>
+    <button class="nav-item" onclick="navTo('jobs', this)">
+      <span class="nav-icon">🎬</span> Jobs
+      <span class="nav-badge nb-gray" id="nav-badge-jobs">—</span>
+    </button>
+
+    <div class="sidebar-section">Automation</div>
+    <button class="nav-item" onclick="navTo('scheduler', this)">
+      <span class="nav-icon">📅</span> Scheduler
+    </button>
+    <button class="nav-item" onclick="navTo('analytics', this)">
+      <span class="nav-icon">📈</span> Analytics
+    </button>
+
+    <div class="sidebar-section">System</div>
+    <button class="nav-item" onclick="navTo('logs', this)">
+      <span class="nav-icon">📜</span> Live Logs
+    </button>
+    <button class="nav-item" onclick="navTo('settings', this)">
+      <span class="nav-icon">⚙️</span> Settings
+    </button>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <!-- ═══ DASHBOARD ══════════════════════════════════════════════════ -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-subtitle" id="dash-date">Loading...</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-ghost btn-sm" onclick="refreshDashboard()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Stat cards -->
+      <div class="stat-cards">
+        <div class="stat-card green">
+          <div class="stat-label">Running Profiles</div>
+          <div class="stat-value" id="ds-running">—</div>
+          <div class="stat-sub">Active right now</div>
+          <div class="stat-icon">🟢</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-label">Errors</div>
+          <div class="stat-value" id="ds-errors">—</div>
+          <div class="stat-sub">Need attention</div>
+          <div class="stat-icon">⚠️</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-label">Total Profiles</div>
+          <div class="stat-value" id="ds-profiles">—</div>
+          <div class="stat-sub">In managed_profiles</div>
+          <div class="stat-icon">👤</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="stat-label">Total Views Today</div>
+          <div class="stat-value" id="ds-views">—</div>
+          <div class="stat-sub">Combined all profiles</div>
+          <div class="stat-icon">📹</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">Active Jobs</div>
+          <div class="stat-value" id="ds-jobs">—</div>
+          <div class="stat-sub">Enabled video jobs</div>
+          <div class="stat-icon">🎬</div>
+        </div>
+      </div>
+
+      <!-- Two column layout -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+        <!-- Recent Activity -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Recent Activity</span>
+            <span style="font-size:0.68rem;color:#444" id="dash-last-update"></span>
+          </div>
+          <div class="card-body">
+            <div id="activityFeed" class="activity-feed">
+              <div class="empty-state" style="padding:20px 0">
+                <div class="es-text">No recent activity</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile Health Summary -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Profile Health</span>
+            <button class="btn btn-ghost btn-sm" onclick="navTo('profiles', document.querySelector('.nav-item:nth-child(5)'))">View All →</button>
+          </div>
+          <div class="card-body">
+            <div id="healthTable">
+              <div class="empty-state" style="padding:20px 0">
+                <div class="es-text">Loading...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══ PROFILES ════════════════════════════════════════════════════ -->
+    <div id="page-profiles" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Profiles</div>
+          <div class="page-subtitle">Multilogin browser profiles manage karo</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-ghost btn-sm" onclick="loadProfiles()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="pf-filters">
+        <button class="filter-chip active" onclick="pfFilter('all',this)">All</button>
+        <button class="filter-chip" onclick="pfFilter('error',this)">🔴 Errors</button>
+        <button class="filter-chip" onclick="pfFilter('idle',this)">⚪ Idle</button>
+        <button class="filter-chip" onclick="pfFilter('noproxy',this)">⚠ No Proxy</button>
+        <span class="pf-count" id="pfCount"></span>
+        <button class="btn btn-ghost btn-sm" onclick="resetAllDaily()" style="margin-left:auto">↺ Reset All Daily</button>
+      </div>
+
+      <div id="pfList" class="pf-list">
+        <div class="empty-state"><div class="es-icon">👤</div><div class="es-text">Loading profiles...</div></div>
+      </div>
+    </div>
+
+    <!-- ═══ CHANNELS ════════════════════════════════════════════════════ -->
+    <div id="page-channels" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Channels</div>
+          <div class="page-subtitle">YouTube channels scan karo aur videos add karo</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header"><span class="card-title">Channel Scanner</span></div>
+        <div class="card-body">
+          <div class="channel-scan-box">
+            <input id="chUrl" class="input" placeholder="https://youtube.com/@ChannelName or channel URL" style="flex:1">
+            <button class="btn btn-primary" onclick="scanChannel()">🔍 Scan Channel</button>
+          </div>
+          <div id="scanStatus" style="display:none;font-size:0.78rem;color:#888;margin-top:8px">Scanning...</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Scanned Videos</span>
+          <span id="scanChannelMeta" style="font-size:0.72rem;color:#555"></span>
+        </div>
+        <div class="card-body" id="scanResults">
+          <div class="empty-state"><div class="es-icon">📺</div><div class="es-text">Channel scan karo upar se</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ JOBS ═════════════════════════════════════════════════════════ -->
+    <div id="page-jobs" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Video Jobs</div>
+          <div class="page-subtitle">Bot in videos ko watch karega</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-success btn-sm" onclick="syncJobsNow()">⚡ Sync DB → Jobs</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadJobs()">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="jobsList" class="jobs-list">
+        <div class="empty-state"><div class="es-icon">🎬</div><div class="es-text">Loading jobs...</div></div>
+      </div>
+    </div>
+
+    <!-- ═══ SCHEDULER ════════════════════════════════════════════════════ -->
+    <div id="page-scheduler" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Scheduler</div>
+          <div class="page-subtitle">Bot runs schedule karo</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary" onclick="showNewSchedule()">+ New Schedule</button>
+        </div>
+      </div>
+
+      <div id="scheduleList" class="schedule-list">
+        <div class="empty-state"><div class="es-icon">📅</div><div class="es-text">Koi schedule nahi. "New Schedule" se banao.</div></div>
+      </div>
+
+      <!-- New Schedule Form -->
+      <div id="newScheduleForm" class="card" style="display:none">
+        <div class="card-header">
+          <span class="card-title">New Schedule</span>
+          <button class="btn btn-ghost btn-sm" onclick="hideNewSchedule()">✕ Cancel</button>
+        </div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group">
+            <label class="label">Schedule Name</label>
+            <input class="input" id="schName" placeholder="e.g. Daily Run - Morning">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label class="label">Run Mode</label>
+              <select class="select" id="schMode" style="width:100%">
+                <option value="manual">Manual (Run Now)</option>
+                <option value="countdown">Countdown Timer</option>
+                <option value="scheduled">Scheduled Time</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="label">Delay Between Profiles (sec)</label>
+              <input class="input" id="schDelay" type="number" value="12" min="5" max="60">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="label">Videos to Watch per Profile</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="input" id="schVidMin" type="number" value="3" min="1" style="width:80px"> Min
+              <input class="input" id="schVidMax" type="number" value="7" min="1" style="width:80px"> Max
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="saveSchedule()">💾 Save Schedule</button>
+            <button class="btn btn-success" onclick="runNow()">▶ Run Now</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ ANALYTICS ════════════════════════════════════════════════════ -->
+    <div id="page-analytics" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Analytics</div>
+          <div class="page-subtitle">View performance, watch time, engagement rates</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-ghost btn-sm" onclick="loadAnalytics()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="stat-cards" id="analyticsStats">
+        <div class="stat-card blue">
+          <div class="stat-label">Total Watches</div>
+          <div class="stat-value" id="an-total">—</div>
+          <div class="stat-sub">All time, all profiles</div>
+          <div class="stat-icon">📹</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">Total Watch Time</div>
+          <div class="stat-value" id="an-time">—</div>
+          <div class="stat-sub">Combined minutes</div>
+          <div class="stat-icon">⏱</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="stat-label">Like Rate</div>
+          <div class="stat-value" id="an-like">—</div>
+          <div class="stat-sub">% of watches liked</div>
+          <div class="stat-icon">👍</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-label">Comment Rate</div>
+          <div class="stat-value" id="an-comment">—</div>
+          <div class="stat-sub">% of watches commented</div>
+          <div class="stat-icon">💬</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Per-Profile Performance</span></div>
+          <div class="card-body">
+            <table class="table">
+              <thead>
+                <tr><th>Profile</th><th>Watches</th><th>Time</th><th>Like%</th><th>Success%</th></tr>
+              </thead>
+              <tbody id="an-profile-table">
+                <tr><td colspan="5" style="text-align:center;color:#333">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Watch History — Recent</span></div>
+          <div class="card-body">
+            <div id="an-recent" style="display:flex;flex-direction:column;gap:6px">
+              <div class="empty-state" style="padding:20px 0"><div class="es-text">Loading...</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ LIVE LOGS ════════════════════════════════════════════════════ -->
+    <div id="page-logs" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Live Logs</div>
+          <div class="page-subtitle">Bot activity real-time mein dekho</div>
+        </div>
+      </div>
+      <div class="log-toolbar">
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.75rem;color:#666">
+          <input type="checkbox" id="logAutoScroll" checked> Auto-scroll
+        </label>
+        <button class="btn btn-ghost btn-sm" onclick="clearLogs()">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="loadLogs()">↻ Refresh</button>
+        <span style="font-size:0.7rem;color:#333;margin-left:auto" id="logCount"></span>
+      </div>
+      <div id="logBox" class="log-box">Waiting for logs...</div>
+    </div>
+
+    <!-- ═══ SETTINGS ═════════════════════════════════════════════════════ -->
+    <div id="page-settings" class="page">
+      <div class="page-header">
+        <div><div class="page-title">Settings</div></div>
+      </div>
+      <div style="max-width:560px;display:flex;flex-direction:column;gap:16px">
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Bot Entry Point</span></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="label">Bot script path (project root se relative)</label>
+              <div style="display:flex;gap:8px">
+                <input class="input" id="settBotEntry" value="run_bot.py">
+                <button class="btn btn-success btn-sm" onclick="saveSetting('botEntry')">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">SmartProxy Defaults</span></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+            <div class="form-group">
+              <label class="label">Proxy Host</label>
+              <input class="input" id="settProxyHost" value="us.smartproxy.net">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <div class="form-group">
+                <label class="label">Port</label>
+                <input class="input" id="settProxyPort" value="3120" type="number">
+              </div>
+              <div class="form-group">
+                <label class="label">Username Prefix</label>
+                <input class="input" id="settProxyUser" value="smart-pwgbkxcy3lyi">
+              </div>
+            </div>
+            <button class="btn btn-success btn-sm" onclick="applyProxyToAll()" style="width:fit-content">
+              ⚡ Apply to All Profiles
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">About</span></div>
+          <div class="card-body" style="font-size:0.78rem;color:#555;line-height:1.8">
+            <div>MMB Agent v2.0 — Python + Flask</div>
+            <div>Backend: Flask | Browser: nodriver + Multilogin</div>
+            <div style="margin-top:8px;color:#333">© 2026 MMB Agent — All rights reserved</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end main-content -->
+</div><!-- end app-body -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════════════════════════
+let _currentPage = 'dashboard';
+
+function navTo(page, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  if (btn) btn.classList.add('active');
+  _currentPage = page;
+
+  const loaders = {
+    dashboard:  refreshDashboard,
+    profiles:   loadProfiles,
+    channels:   null,
+    jobs:       loadJobs,
+    analytics:  loadAnalytics,
+    logs:       loadLogs,
+    scheduler:  loadSchedules,
+    settings:   null,
+  };
+  if (loaders[page]) loaders[page]();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════════════════════════════════════
+function toast(msg, isErr = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' error' : '');
+  setTimeout(() => t.className = 'toast', 2800);
+}
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ══════════════════════════════════════════════════════════════════════════
+// BOT CONTROL (topbar buttons)
+// ══════════════════════════════════════════════════════════════════════════
+let _botRunning = false;
+let _botPollTimer = null;
+
+async function quickBotStart() {
+  const entry = localStorage.getItem('botEntry') || 'run_bot.py';
+  document.getElementById('tbStart').disabled = true;
+  const res = await fetch('/api/bot/start', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ entry })
+  });
+  const d = await res.json();
+  if (d.ok) { toast('Bot started ✓ PID:' + d.pid); startBotPoll(); }
+  else { toast(d.error || 'Start failed', true); document.getElementById('tbStart').disabled = false; }
+}
+
+async function quickBotStop() {
+  document.getElementById('tbStop').disabled = true;
+  const res = await fetch('/api/bot/stop', { method: 'POST' });
+  const d = await res.json();
+  if (d.ok) { toast('Bot stopped'); updateBotUI(false); }
+  else { toast(d.error || 'Stop failed', true); document.getElementById('tbStop').disabled = false; }
+}
+
+function startBotPoll() {
+  if (_botPollTimer) clearInterval(_botPollTimer);
+  _botPollTimer = setInterval(pollBotStatus, 4000);
+  pollBotStatus();
+}
+
+async function pollBotStatus() {
+  try {
+    const d = await fetch('/api/bot/status').then(r => r.json());
+    updateBotUI(d.running);
+    if (_currentPage === 'logs') appendLiveLog(d.log_lines || []);
+    if (_currentPage === 'dashboard') updateDashProfiles(d.profiles || []);
+  } catch(e) {}
+}
+
+function updateBotUI(running) {
+  _botRunning = running;
+  const dot   = document.getElementById('topDot');
+  const lbl   = document.getElementById('topLabel');
+  const start = document.getElementById('tbStart');
+  const stop  = document.getElementById('tbStop');
+  dot.className   = 'top-bot-dot' + (running ? ' live' : '');
+  lbl.className   = 'top-bot-label' + (running ? ' live' : '');
+  lbl.textContent = running ? 'Bot Live' : 'Bot Offline';
+  start.style.display = running ? 'none' : '';
+  stop.style.display  = running ? '' : 'none';
+  start.disabled = stop.disabled = false;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════
+async function refreshDashboard() {
+  document.getElementById('dash-date').textContent = new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+
+  const [profRes, jobsRes, whRes] = await Promise.all([
+    fetch('/api/profiles').then(r=>r.json()).catch(()=>({profiles:[]})),
+    fetch('/api/jobs').then(r=>r.json()).catch(()=>({jobs:[]})),
+    fetch('/api/watch_history').then(r=>r.json()).catch(()=>({profiles:[]})),
+  ]);
+
+  const profiles = profRes.profiles || [];
+  const jobs     = (jobsRes.jobs || []).filter(j => j.enabled !== false);
+  const wh       = whRes.profiles || [];
+
+  const errCount  = profiles.filter(p => (p.health||'').includes('ERROR') || p.last_error).length;
+  const runCount  = profiles.filter(p => p.health === 'RUNNING').length;
+  const todayViews = profiles.reduce((s,p) => s + (p.daily_views||0), 0);
+
+  document.getElementById('ds-running').textContent = runCount;
+  document.getElementById('ds-errors').textContent  = errCount;
+  document.getElementById('ds-profiles').textContent = profiles.length;
+  document.getElementById('ds-views').textContent   = todayViews;
+  document.getElementById('ds-jobs').textContent    = jobs.length;
+  document.getElementById('nav-badge-profiles').textContent = profiles.length;
+  document.getElementById('nav-badge-jobs').textContent     = jobs.length;
+
+  // Activity feed from watch history
+  const allEntries = [];
+  wh.forEach(p => {
+    if (p.last_watched_at) allEntries.push({
+      profile: p.profile_short || p.profile_id?.slice(0,8),
+      title: p.last_title || p.last_video_id,
+      time: p.last_watched_at,
+      type: 'watch'
+    });
+  });
+  allEntries.sort((a,b) => b.time.localeCompare(a.time));
+
+  const feed = document.getElementById('activityFeed');
+  if (!allEntries.length) {
+    feed.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="es-text">No recent activity</div></div>';
+  } else {
+    feed.innerHTML = allEntries.slice(0,12).map(e => {
+      const t = new Date(e.time).toLocaleTimeString();
+      return `<div class="activity-item">
+        <div class="activity-dot ad-green"></div>
+        <span style="color:#888;font-size:0.7rem;flex-shrink:0">${esc(e.profile)}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.title)}</span>
+        <span class="activity-time">${t}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Health table
+  const healthEl = document.getElementById('healthTable');
+  if (!profiles.length) {
+    healthEl.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="es-text">No profiles</div></div>';
+  } else {
+    healthEl.innerHTML = `<table class="table">
+      <thead><tr><th>Profile</th><th>Platform</th><th>Health</th><th>Views</th></tr></thead>
+      <tbody>
+        ${profiles.slice(0,8).map(p => {
+          const h = (p.health||'IDLE').toUpperCase();
+          const hCls = h.includes('ERROR') ? 'badge-red' : h.includes('RUN') ? 'badge-green' : 'badge-gray';
+          const platIcon = p.platform === 'windows' ? '🪟' : p.platform === 'macos' ? '🍎' : '❓';
+          return `<tr>
+            <td style="font-family:monospace;font-size:0.72rem;color:#c9a227">${esc(p.label||p.profile_id?.slice(0,8))}</td>
+            <td>${platIcon}</td>
+            <td><span class="badge ${hCls}">${h}</span></td>
+            <td>${p.daily_views||0}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  }
+
+  document.getElementById('dash-last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+}
+
+function updateDashProfiles(profiles) {
+  // Called from bot status poll — update running count
+  const run = profiles.filter(p => p.status === 'running').length;
+  if (run > 0) document.getElementById('ds-running').textContent = run;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PROFILES
+// ══════════════════════════════════════════════════════════════════════════
+let _allPf = [], _pfFilter = 'all';
+
+async function loadProfiles() {
+  document.getElementById('pfList').innerHTML = '<div class="empty-state"><div class="es-icon">⏳</div><div class="es-text">Loading...</div></div>';
+  const d = await fetch('/api/profiles').then(r=>r.json()).catch(()=>({profiles:[]}));
+  _allPf = d.profiles || [];
+  document.getElementById('nav-badge-profiles').textContent = _allPf.length;
+  renderProfiles();
+}
+
+function pfFilter(f, btn) {
+  _pfFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderProfiles();
+}
+
+function renderProfiles() {
+  let list = _allPf;
+  if (_pfFilter === 'error')   list = list.filter(p => (p.health||'').includes('ERROR') || p.last_error);
+  if (_pfFilter === 'idle')    list = list.filter(p => (p.health||'IDLE') === 'IDLE');
+  if (_pfFilter === 'noproxy') list = list.filter(p => !p.has_proxy);
+  document.getElementById('pfCount').textContent = `${list.length} / ${_allPf.length}`;
+
+  if (!list.length) {
+    document.getElementById('pfList').innerHTML = '<div class="empty-state"><div class="es-icon">🔍</div><div class="es-text">Koi profile nahi mili.</div></div>';
+    return;
+  }
+
+  document.getElementById('pfList').innerHTML = list.map(p => {
+    const h = (p.health||'IDLE').toUpperCase();
+    const hCls = h.includes('ERROR') ? 'badge-red' : h.includes('RUN') ? 'badge-green' : h.includes('COOL') ? 'badge-yellow' : 'badge-gray';
+    const hIcon = h.includes('ERROR') ? '🔴' : h.includes('RUN') ? '🟢' : h.includes('COOL') ? '🟡' : '⚪';
+    const platIcon = p.platform === 'windows' ? '🪟' : p.platform === 'macos' ? '🍎' : '❓';
+    const rowCls = h.includes('ERROR') ? 'has-error' : h.includes('RUN') ? 'is-running' : '';
+    const lastUsed = p.last_used_at ? new Date(p.last_used_at).toLocaleString() : '—';
+    const ps = p.profile_id.replace(/-/g,'_');
+    const sr = p.total_views > 0 ? Math.round((p.successful_views/p.total_views)*100) : 0;
+
+    return `
+    <div class="pf-row ${rowCls}" id="pfr-${ps}">
+      <div class="pf-row-main" onclick="pfToggle('${ps}')">
+        <div class="pf-avatar">${(p.label||'??').slice(0,2).toUpperCase()}</div>
+        <div class="pf-info-block">
+          <div class="pf-name">
+            ${esc(p.label||p.profile_id.slice(0,8))}
+            <span class="badge ${hCls}">${hIcon} ${h}</span>
+            ${p.has_proxy ? '<span class="badge badge-green">🌐 Proxy</span>' : '<span class="badge badge-gray" style="color:#555">No Proxy</span>'}
+            ${platIcon}
+          </div>
+          <div class="pf-meta-row">
+            <span class="pf-meta">📅 Last: ${lastUsed}</span>
+            <span class="pf-meta">🆔 ${p.profile_id.slice(0,12)}…</span>
+          </div>
+        </div>
+        <div class="pf-stats-block">
+          <div class="pf-stat-mini"><div class="val">${p.total_views||0}</div><div class="lbl">Total</div></div>
+          <div class="pf-stat-mini"><div class="val" style="color:#2ecc71">${p.successful_views||0}</div><div class="lbl">OK</div></div>
+          <div class="pf-stat-mini"><div class="val" style="color:#e74c3c">${p.failed_views||0}</div><div class="lbl">Fail</div></div>
+          <div class="pf-stat-mini"><div class="val">${p.daily_views||0}</div><div class="lbl">Today</div></div>
+        </div>
+        <div class="pf-actions-block">
+          ${p.last_error ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();clearErr('${p.profile_id}')">🗑 Clear Error</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();resetViews('${p.profile_id}')">↺ Reset</button>
+        </div>
+      </div>
+      <div class="pf-expand" id="pfe-${ps}">
+        ${p.last_error ? `<div class="pf-error-box">${esc(p.last_error)}</div>` : ''}
+        <div style="font-size:0.72rem;color:#444;margin-bottom:10px">
+          Full ID: <code style="color:#c9a227">${p.profile_id}</code> | Group: ${p.group||'default'}
+        </div>
+        <div style="font-size:0.75rem;color:#666;font-weight:700;margin-bottom:8px">🌐 Proxy Config</div>
+        <div class="proxy-grid">
+          <div class="form-group"><label class="label">Host</label><input class="input input-sm" id="ph-${ps}" value="${p.proxy_host||''}" placeholder="us.smartproxy.net"></div>
+          <div class="form-group"><label class="label">Port</label><input class="input input-sm" id="pp-${ps}" value="${p.proxy_port||''}" type="number" placeholder="3120"></div>
+          <div class="form-group"><label class="label">Username</label><input class="input input-sm" id="pu-${ps}" value="${p.proxy_user||''}" placeholder="user"></div>
+          <div class="form-group"><label class="label">Password</label><input class="input input-sm" id="pw-${ps}" type="password" placeholder="••••••"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-success btn-sm" onclick="saveProxy('${p.profile_id}','${ps}')">💾 Save Proxy</button>
+          <button class="btn btn-ghost btn-sm" onclick="fillSmartProxy('${ps}')">⚡ Fill SmartProxy</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function pfToggle(ps) {
+  const el = document.getElementById('pfe-' + ps);
+  if (el) el.classList.toggle('open');
+}
+
+async function clearErr(pid) {
+  const d = await fetch(`/api/profiles/${pid}/reset_error`, {method:'POST'}).then(r=>r.json());
+  if (d.ok) { toast('Error cleared ✓'); loadProfiles(); } else toast(d.error||'Failed', true);
+}
+
+async function resetViews(pid) {
+  const d = await fetch(`/api/profiles/${pid}/reset_views`, {method:'POST'}).then(r=>r.json());
+  if (d.ok) { toast('Daily views reset ✓'); loadProfiles(); } else toast(d.error||'Failed', true);
+}
+
+async function saveProxy(pid, ps) {
+  const d = await fetch(`/api/profiles/${pid}/proxy`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      proxy_host: document.getElementById('ph-'+ps)?.value||'',
+      proxy_port: parseInt(document.getElementById('pp-'+ps)?.value||0),
+      proxy_user: document.getElementById('pu-'+ps)?.value||'',
+      proxy_pass: document.getElementById('pw-'+ps)?.value||'',
+      proxy_type: 'http'
+    })
+  }).then(r=>r.json());
+  if (d.ok) { toast('Proxy saved ✓'); loadProfiles(); } else toast(d.error||'Failed', true);
+}
+
+function fillSmartProxy(ps) {
+  document.getElementById('ph-'+ps).value = 'us.smartproxy.net';
+  document.getElementById('pp-'+ps).value = '3120';
+  document.getElementById('pu-'+ps).value = 'smart-pwgbkxcy3lyi';
+  toast('SmartProxy defaults filled — password bhi dalo');
+}
+
+async function resetAllDaily() {
+  if (!confirm('Sab profiles ka daily views reset karna hai?')) return;
+  for (const p of _allPf) {
+    await fetch(`/api/profiles/${p.profile_id}/reset_views`, {method:'POST'});
+  }
+  toast(`${_allPf.length} profiles daily views reset ✓`);
+  loadProfiles();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CHANNELS
+// ══════════════════════════════════════════════════════════════════════════
+let _scanCh = {id:'', name:'', url:''};
+
+async function scanChannel() {
+  const url = document.getElementById('chUrl').value.trim();
+  if (!url) return;
+  const st = document.getElementById('scanStatus');
+  const rs = document.getElementById('scanResults');
+  st.style.display = 'block'; st.textContent = 'Scanning RSS feed...';
+  rs.innerHTML = '';
+
+  const d = await fetch('/api/scan_channel', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({url})
+  }).then(r=>r.json()).catch(e=>({error:e.message}));
+
+  st.style.display = 'none';
+  if (d.error) { rs.innerHTML = `<div style="color:#e74c3c;font-size:0.8rem">❌ ${esc(d.error)}</div>`; return; }
+
+  _scanCh.id   = d.channel_id || '';
+  const m = url.match(/@([\w]+)/);
+  _scanCh.name = m ? m[1] : (d.channel_id || 'Channel');
+  _scanCh.url  = url;
+
+  document.getElementById('scanChannelMeta').textContent = `${_scanCh.name} — ${(d.videos||[]).length} videos`;
+
+  const vids = d.videos || [];
+  if (!vids.length) { rs.innerHTML = '<div style="color:#555;font-size:0.8rem">No videos found</div>'; return; }
+
+  rs.innerHTML = `<table class="table">
+    <thead><tr><th>Thumbnail</th><th>Title</th><th>Published</th><th>Action</th></tr></thead>
+    <tbody>
+      ${vids.map(v => `<tr>
+        <td><img src="https://img.youtube.com/vi/${v.video_id}/default.jpg" style="width:64px;height:36px;border-radius:4px;object-fit:cover"></td>
+        <td>${esc(v.title||v.video_id)}</td>
+        <td style="color:#444;font-size:0.7rem">${v.published||''}</td>
+        <td><button class="btn btn-success btn-sm" onclick="addVideoToJobs('${v.video_id}',\`${(v.title||'').replace(/`/g,"'")}\`)">+ Add to Jobs</button></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function addVideoToJobs(vid, title) {
+  const d = await fetch('/api/add_video', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({video_id:vid, title, channel_id:_scanCh.id, channel_name:_scanCh.name, channel_url:_scanCh.url})
+  }).then(r=>r.json());
+  if (d.ok) toast('Video added to Jobs ✓');
+  else toast(d.error||'Already exists', true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// JOBS
+// ══════════════════════════════════════════════════════════════════════════
+async function loadJobs() {
+  const d = await fetch('/api/jobs').then(r=>r.json()).catch(()=>({jobs:[]}));
+  const jobs = d.jobs || [];
+  document.getElementById('nav-badge-jobs').textContent = jobs.length;
+
+  if (!jobs.length) {
+    document.getElementById('jobsList').innerHTML = '<div class="empty-state"><div class="es-icon">🎬</div><div class="es-text">No jobs yet. Channels mein jao aur videos add karo.</div></div>';
+    return;
+  }
+
+  document.getElementById('jobsList').innerHTML = jobs.map(j => {
+    const en = j.enabled !== false;
+    const thumb = `https://img.youtube.com/vi/${j.video_id}/mqdefault.jpg`;
+    return `
+    <div class="job-row ${en?'':'disabled'}" id="jr-${j.id}">
+      <img class="job-thumb" src="${thumb}" onerror="this.style.display='none'">
+      <div class="job-info">
+        <div class="job-title" title="${esc(j.title_hint||j.video_id)}">${esc(j.title_hint||j.video_id)}</div>
+        <div class="job-meta">
+          <span class="job-tag jt-ch">📺 ${esc(j.channel_name||'—')}</span>
+          <span class="job-tag jt-id">${j.video_id}</span>
+          <span style="font-size:0.7rem;color:#555">🎯 ${j.target_views||0} views</span>
+        </div>
+      </div>
+      <div class="job-right">
+        <div style="font-size:0.68rem;color:#555;margin-bottom:3px">Views</div>
+        <input class="views-input" type="number" value="${j.target_views||6}" min="1" max="100"
+          onchange="setViews('${j.id}', this.value)">
+        <label class="toggle">
+          <input type="checkbox" ${en?'checked':''} onchange="toggleJob('${j.id}',this)">
+          <span class="toggle-track"></span><span class="toggle-thumb"></span>
+        </label>
+        <button onclick="deleteJob('${j.id}')" style="background:none;border:none;color:#333;cursor:pointer;font-size:1rem;padding:4px;border-radius:4px" onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color='#333'">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleJob(id, cb) {
+  const d = await fetch(`/api/jobs/${id}/toggle`, {method:'POST'}).then(r=>r.json());
+  if (d.ok) { document.getElementById('jr-'+id)?.classList.toggle('disabled', !d.enabled); toast(d.enabled?'Enabled ✓':'Disabled'); }
+  else { toast(d.error||'Failed', true); cb.checked = !cb.checked; }
+}
+
+async function setViews(id, v) {
+  await fetch(`/api/jobs/${id}/views`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_views:parseInt(v)})});
+  toast('Views updated ✓');
+}
+
+async function deleteJob(id) {
+  if (!confirm('Remove this job?')) return;
+  const d = await fetch(`/api/delete_job/${id}`, {method:'DELETE'}).then(r=>r.json());
+  if (d.ok) { toast('Job removed'); loadJobs(); }
+}
+
+async function syncJobsNow() {
+  const d = await fetch('/api/sync_jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({overwrite:false})}).then(r=>r.json());
+  if (d.ok) { toast(`Synced: ${d.added} added, ${d.skipped} skipped`); loadJobs(); }
+  else toast(d.error||'Sync failed', true);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ANALYTICS
+// ══════════════════════════════════════════════════════════════════════════
+async function loadAnalytics() {
+  const d = await fetch('/api/watch_history').then(r=>r.json()).catch(()=>({profiles:[]}));
+  const profiles = d.profiles || [];
+
+  const totalW   = profiles.reduce((s,p) => s + (p.total_watches||0), 0);
+  const totalMin = profiles.reduce((s,p) => s + (p.total_watch_min||0), 0);
+  const avgLike  = profiles.length ? Math.round(profiles.reduce((s,p)=>s+(p.like_rate||0),0)/profiles.length) : 0;
+  const avgCom   = profiles.length ? Math.round(profiles.reduce((s,p)=>s+(p.comment_rate||0),0)/profiles.length) : 0;
+
+  document.getElementById('an-total').textContent   = totalW;
+  document.getElementById('an-time').textContent    = Math.round(totalMin) + 'm';
+  document.getElementById('an-like').textContent    = avgLike + '%';
+  document.getElementById('an-comment').textContent = avgCom + '%';
+
+  // Per-profile table
+  document.getElementById('an-profile-table').innerHTML = profiles.length
+    ? profiles.map(p => `<tr>
+        <td style="font-family:monospace;font-size:0.7rem;color:#c9a227">${esc(p.profile_short)}</td>
+        <td>${p.total_watches}</td>
+        <td>${p.total_watch_min}m</td>
+        <td>${p.like_rate}%</td>
+        <td><span class="badge ${p.total_watches>0?'badge-green':'badge-gray'}">—</span></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:#333">No history</td></tr>';
+
+  // Recent
+  const rec = document.getElementById('an-recent');
+  rec.innerHTML = profiles.slice(0,5).map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #111">
+      <span style="font-family:monospace;font-size:0.68rem;color:#c9a227;flex-shrink:0">${esc(p.profile_short)}</span>
+      <span style="flex:1;font-size:0.75rem;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.last_title||p.last_video_id||'—')}</span>
+      <span style="font-size:0.68rem;color:#444;flex-shrink:0">${p.last_watched_at ? new Date(p.last_watched_at).toLocaleDateString() : '—'}</span>
+    </div>
+  `).join('') || '<div class="empty-state" style="padding:20px 0"><div class="es-text">No history yet</div></div>';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOGS
+// ══════════════════════════════════════════════════════════════════════════
+let _logLines = [];
+async function loadLogs() {
+  const d = await fetch('/api/bot/logs?limit=150').then(r=>r.json()).catch(()=>({lines:[]}));
+  _logLines = d.lines || [];
+  renderLogs();
+}
+
+function appendLiveLog(newLines) {
+  if (!newLines.length) return;
+  _logLines = [..._logLines, ...newLines].slice(-200);
+  if (_currentPage === 'logs') renderLogs();
+  document.getElementById('logCount').textContent = _logLines.length + ' lines';
+}
+
+function renderLogs() {
+  const box = document.getElementById('logBox');
+  if (!_logLines.length) { box.textContent = 'No logs yet. Bot start karo.'; return; }
+  box.innerHTML = _logLines.map(line => {
+    const cls = /error|exception|traceback|fail/i.test(line) ? 'log-err'
+              : /warning|warn/i.test(line)                   ? 'log-warn'
+              : /\[info\]|✓|ok |success|started/i.test(line) ? 'log-ok'
+              : 'log-dim';
+    return `<span class="${cls}">${esc(line)}</span>`;
+  }).join('\n');
+  if (document.getElementById('logAutoScroll').checked) box.scrollTop = box.scrollHeight;
+  document.getElementById('logCount').textContent = _logLines.length + ' lines';
+}
+
+function clearLogs() {
+  _logLines = [];
+  document.getElementById('logBox').textContent = 'Cleared.';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SCHEDULER
+// ══════════════════════════════════════════════════════════════════════════
+let _schedules = JSON.parse(localStorage.getItem('mmb_schedules') || '[]');
+
+function loadSchedules() {
+  const el = document.getElementById('scheduleList');
+  if (!_schedules.length) {
+    el.innerHTML = '<div class="empty-state"><div class="es-icon">📅</div><div class="es-text">Koi schedule nahi. "New Schedule" button use karo.</div></div>';
+    return;
+  }
+  el.innerHTML = _schedules.map((s,i) => `
+    <div class="sch-row">
+      <div class="sch-info">
+        <div class="sch-name">${esc(s.name)}</div>
+        <div class="sch-meta">Mode: ${s.mode} | Delay: ${s.delay}s | Videos: ${s.vidMin}–${s.vidMax} per profile</div>
+        ${s.running ? '<div class="progress-bar"><div class="progress-bar-fill" style="width:' + (s.progress||0) + '%"></div></div>' : ''}
+      </div>
+      <div class="sch-actions">
+        ${!s.running
+          ? `<button class="btn btn-success btn-sm" onclick="runSchedule(${i})">▶ Run</button>`
+          : `<button class="btn btn-danger btn-sm" onclick="stopSchedule(${i})">⏹ Stop</button>`}
+        <button class="btn btn-ghost btn-sm" onclick="deleteSchedule(${i})">🗑</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showNewSchedule()  { document.getElementById('newScheduleForm').style.display = 'block'; }
+function hideNewSchedule()  { document.getElementById('newScheduleForm').style.display = 'none'; }
+
+function saveSchedule() {
+  const name = document.getElementById('schName').value.trim();
+  if (!name) { toast('Name required', true); return; }
+  _schedules.push({
+    name, mode: document.getElementById('schMode').value,
+    delay: parseInt(document.getElementById('schDelay').value)||12,
+    vidMin: parseInt(document.getElementById('schVidMin').value)||3,
+    vidMax: parseInt(document.getElementById('schVidMax').value)||7,
+    running: false, progress: 0,
+    created: new Date().toISOString()
+  });
+  localStorage.setItem('mmb_schedules', JSON.stringify(_schedules));
+  hideNewSchedule();
+  toast('Schedule saved ✓');
+  loadSchedules();
+}
+
+function runSchedule(i) {
+  _schedules[i].running = true; _schedules[i].progress = 0;
+  localStorage.setItem('mmb_schedules', JSON.stringify(_schedules));
+  toast('Schedule started — bot start karna mat bhoolo');
+  loadSchedules();
+}
+
+function stopSchedule(i) {
+  _schedules[i].running = false;
+  localStorage.setItem('mmb_schedules', JSON.stringify(_schedules));
+  toast('Schedule stopped');
+  loadSchedules();
+}
+
+function deleteSchedule(i) {
+  if (!confirm('Delete this schedule?')) return;
+  _schedules.splice(i, 1);
+  localStorage.setItem('mmb_schedules', JSON.stringify(_schedules));
+  loadSchedules();
+}
+
+function runNow() {
+  saveSchedule();
+  toast('Run Now — ▶ Start Bot karo topbar se');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SETTINGS
+// ══════════════════════════════════════════════════════════════════════════
+function saveSetting(key) {
+  if (key === 'botEntry') {
+    const v = document.getElementById('settBotEntry').value.trim();
+    localStorage.setItem('botEntry', v);
+    toast('Entry path saved ✓');
+  }
+}
+
+async function applyProxyToAll() {
+  if (!confirm('Sab profiles mein ye proxy apply karni hai?')) return;
+  const host = document.getElementById('settProxyHost').value.trim();
+  const port = parseInt(document.getElementById('settProxyPort').value)||3120;
+  const user = document.getElementById('settProxyUser').value.trim();
+  const pf = await fetch('/api/profiles').then(r=>r.json()).then(d=>d.profiles||[]);
+  let done = 0;
+  for (const p of pf) {
+    const d = await fetch(`/api/profiles/${p.profile_id}/proxy`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({proxy_host:host, proxy_port:port, proxy_user:user, proxy_pass:'', proxy_type:'http'})
+    }).then(r=>r.json());
+    if (d.ok) done++;
+  }
+  toast(`Proxy applied to ${done}/${pf.length} profiles ✓`);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════
+// Restore settings
+const savedEntry = localStorage.getItem('botEntry');
+if (savedEntry) document.getElementById('settBotEntry').value = savedEntry;
+
+// Load initial data
+refreshDashboard();
+startBotPoll();
+</script>
+</body>
+</html>

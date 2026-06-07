@@ -216,23 +216,37 @@ class IdentityManager:
 
     # ── Main API ──────────────────────────────────────────────────────────────
 
-    async def get_identity(self, profile_id: str) -> ProfileIdentity:
+    async def get_identity(self, profile_id: str, custom_resolution: Optional[tuple[int, int]] = None) -> ProfileIdentity:
         """
         Get complete browser identity for a profile.
         Uses cache if fresh, otherwise fetches GeoIP from proxy IP.
         Always returns a valid identity (falls back to US defaults on error).
+
+        custom_resolution: optional (width, height) tuple. If provided, overrides
+        the country-pool auto-pick. Used when user manually sets resolution at
+        profile creation time.
         """
         # 1. In-memory cache (same process)
         if profile_id in self._memory_cache:
             cached = self._memory_cache[profile_id]
             age = time.time() - cached.cached_at
             if age < _CACHE_TTL:
-                log.debug(f"[Identity] Memory cache hit for {profile_id[:8]}")
+                # If custom resolution requested and cached doesn't match, override in place
+                if custom_resolution and (cached.screen_width, cached.screen_height) != custom_resolution:
+                    cached.screen_width, cached.screen_height = custom_resolution
+                    self._save_cache(profile_id, cached)
+                    log.info(f"[Identity] Memory-cache resolution overridden for {profile_id[:8]} → {custom_resolution[0]}x{custom_resolution[1]}")
+                else:
+                    log.debug(f"[Identity] Memory cache hit for {profile_id[:8]}")
                 return cached
 
         # 2. Disk cache
         cached_disk = self._load_cache(profile_id)
         if cached_disk:
+            if custom_resolution and (cached_disk.screen_width, cached_disk.screen_height) != custom_resolution:
+                cached_disk.screen_width, cached_disk.screen_height = custom_resolution
+                self._save_cache(profile_id, cached_disk)
+                log.info(f"[Identity] Disk-cache resolution overridden for {profile_id[:8]} → {custom_resolution[0]}x{custom_resolution[1]}")
             self._memory_cache[profile_id] = cached_disk
             log.info(f"[Identity] Disk cache hit for {profile_id[:8]} | "
                      f"country={cached_disk.country_code} tz={cached_disk.timezone}")
@@ -240,14 +254,15 @@ class IdentityManager:
 
         # 3. Fetch from GeoIP
         geo = await self._fetch_geo(profile_id)
-        identity = self._build_identity(profile_id, geo)
+        identity = self._build_identity(profile_id, geo, custom_resolution=custom_resolution)
         self._save_cache(profile_id, identity)
         self._memory_cache[profile_id] = identity
 
         log.info(f"[Identity] Built for {profile_id[:8]} | "
                  f"country={identity.country_code} city={identity.city} "
                  f"tz={identity.timezone} res={identity.screen_width}x{identity.screen_height} "
-                 f"lang={identity.language}")
+                 f"lang={identity.language}"
+                 + (" [custom-res]" if custom_resolution else ""))
         return identity
 
     async def apply_to_browser(self, tab: Any, identity: ProfileIdentity) -> None:
@@ -390,8 +405,12 @@ class IdentityManager:
 
     # ── Identity builder ──────────────────────────────────────────────────────
 
-    def _build_identity(self, profile_id: str, geo: GeoInfo) -> ProfileIdentity:
-        """Build complete ProfileIdentity from GeoInfo + profile_id hash."""
+    def _build_identity(self, profile_id: str, geo: GeoInfo, custom_resolution: Optional[tuple[int, int]] = None) -> ProfileIdentity:
+        """Build complete ProfileIdentity from GeoInfo + profile_id hash.
+
+        custom_resolution: optional (width, height). If set, used instead of
+        country-pool auto-pick. Caller is responsible for validating the tuple.
+        """
         cc = geo.country_code or "US"
 
         # Timezone — use API value if set, else country map
@@ -400,8 +419,11 @@ class IdentityManager:
         # Language
         lang, accept_lang = _LANGUAGE_MAP.get(cc, _LANGUAGE_MAP["_DEFAULT"])
 
-        # Screen resolution — deterministic per profile (same profile = same resolution)
-        screen_w, screen_h = self._get_resolution(cc, profile_id)
+        # Screen resolution — user override > deterministic per-profile pool
+        if custom_resolution:
+            screen_w, screen_h = custom_resolution
+        else:
+            screen_w, screen_h = self._get_resolution(cc, profile_id)
 
         # Noise seeds — all deterministic from profile_id SHA-256
         noise_seed = self._noise_seed_int(profile_id)

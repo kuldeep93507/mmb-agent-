@@ -2,7 +2,7 @@
   "version": "1.5.4",
   "lastUpdate": "2026-05-28",
   "changelog": [
-    "MMB Agent 24/7 — release2 build",
+    "Web app: Vite + Python backend (no desktop installer)",
     "Live Monitor + shuffle + engagement fixes",
     "Team app: use Download Update banner when owner publishes GitHub release"
   ],

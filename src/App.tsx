@@ -18,6 +18,7 @@ import MonitorPage from './components/MonitorPage';
 import EngagementPage from './components/EngagementPage';
 import GmailSetupPage from './components/GmailSetupPage';
 import ProxySettingsPage from './components/ProxySettingsPage';
+import RecyclePage from './components/RecyclePage';
 import SplashScreen from './components/SplashScreen';
 import { useStore } from './store/useStore';
 import { isPackagedElectron } from './utils/appMode';
@@ -28,7 +29,7 @@ import { isMultiloginProxyHost } from './utils/profileAdapter';
 import type { OS } from './types';
 
 export default function App() {
-  // Splash in browser dev only — packaged Electron uses electron/splash.html (5.5s)
+  // Browser splash on first visit this session
   const [showSplash, setShowSplash] = useState(() => {
     if (isPackagedElectron()) return false;
     const shown = sessionStorage.getItem('mmb_splash_shown');
@@ -175,6 +176,8 @@ export default function App() {
         return <CommentTemplatesPage />;
       case 'engagement':
         return <EngagementPage profiles={profiles} channels={channelStore.channels} getVideos={channelStore.getVideos} setActiveTab={setActiveTab} />;
+      case 'recycle':
+        return <RecyclePage />;
       case 'gmail-setup':
         return <GmailSetupPage profiles={profiles} />;
       case 'proxy':

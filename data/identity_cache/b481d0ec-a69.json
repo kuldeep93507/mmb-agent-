@@ -1,0 +1,18 @@
+{
+  "profile_id": "b481d0ec-a695-4882-b7fb-bb341915b720",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Saint Johns",
+  "timezone": "America/Detroit",
+  "lat": 43.004,
+  "lon": -84.5693,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1280,
+  "screen_height": 800,
+  "noise_seed": 2732655765,
+  "canvas_noise": 0.006082,
+  "webgl_noise": 0.002822,
+  "audio_noise": 5.776e-05,
+  "cached_at": 1780580696.6033993
+}

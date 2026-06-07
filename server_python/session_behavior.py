@@ -89,10 +89,11 @@ class SessionBehaviorPlan:
         rng = random.Random(int(seed[:16], 16))
 
         # Spread action times across video — different byte offsets per action
-        like_pct = _pct(seed, 0, 0.14, 0.42)
-        dislike_pct = _pct(seed, 2, 0.16, 0.44)
+        # Rule 4: Like/Dislike ONLY after 10% watch (not before)
+        like_pct = _pct(seed, 0, 0.10, 0.30)
+        dislike_pct = _pct(seed, 2, 0.10, 0.30)
         if abs(like_pct - dislike_pct) < 0.04:
-            dislike_pct = min(0.48, dislike_pct + 0.06)
+            dislike_pct = min(0.35, dislike_pct + 0.06)
 
         order = list(_DEFAULT_ACTION_ORDER)
         rng.shuffle(order)
@@ -114,8 +115,8 @@ class SessionBehaviorPlan:
             seek_at_pct=_pct(seed, 14, 0.30, 0.65),
             comment_at_pct=_pct(seed, 16, 0.68, 0.92),
             comment_like_at_pct=_pct(seed, 18, 0.82, 0.97),
-            pause_hold_sec=_pct(seed, 20, 12.0, 28.0),
-            seek_seconds=_int(seed, 22, 10, 20),
+            pause_hold_sec=_pct(seed, 20, 2.0, 6.0),    # Rule 3: realistic 2-6s pause
+            seek_seconds=_int(seed, 22, 10, 25),          # Rule 9: max 30s seek
             seek_dir=("forward", "backward", "mixed")[_int(seed, 24, 0, 2)],
             scroll_prob=_pct(seed, 26, 0.10, 0.38),
             mouse_prob=_pct(seed, 28, 0.12, 0.35),

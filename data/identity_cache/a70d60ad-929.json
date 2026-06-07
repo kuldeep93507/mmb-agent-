@@ -1,0 +1,18 @@
+{
+  "profile_id": "a70d60ad-9299-40ed-b6fd-035156078883",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Cincinnati",
+  "timezone": "America/New_York",
+  "lat": 39.1031,
+  "lon": -84.512,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1280,
+  "screen_height": 800,
+  "noise_seed": 1487186647,
+  "canvas_noise": 0.00142,
+  "webgl_noise": 0.003546,
+  "audio_noise": 1.863e-05,
+  "cached_at": 1780629777.056961
+}

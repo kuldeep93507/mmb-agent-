@@ -1,0 +1,18 @@
+{
+  "profile_id": "5d845313-8eba-42ef-8a14-e037f1cd6a78",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Burbank",
+  "timezone": "America/Chicago",
+  "lat": 41.7402,
+  "lon": -87.7723,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1536,
+  "screen_height": 864,
+  "noise_seed": 390175778,
+  "canvas_noise": 0.007266,
+  "webgl_noise": 0.00304,
+  "audio_noise": 9.553e-05,
+  "cached_at": 1780672063.6456108
+}

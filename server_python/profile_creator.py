@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from typing import Optional
 
 log = logging.getLogger("mmb.profile_creator")
 
@@ -109,6 +110,20 @@ async def create_full_profile(body: dict) -> dict:
     profile_mode = (body.get("profileMode") or "cloud").lower()
     fp_config = body.get("fingerprintConfig") or {}
 
+    # Parse user-selected resolution override (e.g. "1920x1080"). Falls back to
+    # country-pool deterministic pick when unset / "auto" / malformed.
+    custom_resolution: Optional[tuple[int, int]] = None
+    raw_res = body.get("resolution")
+    if raw_res and isinstance(raw_res, str) and raw_res.lower() != "auto":
+        try:
+            parts = raw_res.lower().replace("×", "x").split("x")
+            if len(parts) == 2:
+                w, h = int(parts[0].strip()), int(parts[1].strip())
+                if 320 <= w <= 7680 and 240 <= h <= 4320:
+                    custom_resolution = (w, h)
+        except Exception:
+            custom_resolution = None
+
     temp_id = str(uuid.uuid4())
     if proxy_type == "multilogin" and browser_type == "multilogin":
         proxy = _build_multilogin_builtin_proxy()
@@ -128,7 +143,7 @@ async def create_full_profile(body: dict) -> dict:
             resolve_identity_for_create,
         )
 
-        identity, public_ip = await resolve_identity_for_create(temp_id)
+        identity, public_ip = await resolve_identity_for_create(temp_id, custom_resolution=custom_resolution)
         mlx_os = _os_to_multilogin(os_name)
         proxy_payload = _mlx_proxy_payload(proxy, "cloud") if proxy.get("type") != "none" else None
         parameters = build_mlx_real_parameters(
@@ -156,7 +171,7 @@ async def create_full_profile(body: dict) -> dict:
         )
         from server_python.providers.morelogin import MoreLoginProvider
 
-        identity, public_ip = await resolve_identity_for_create(temp_id)
+        identity, public_ip = await resolve_identity_for_create(temp_id, custom_resolution=custom_resolution)
         ml_fp = build_morelogin_create_fields(identity, os_name)
         provider = MoreLoginProvider()
         result = await provider.create_profile({

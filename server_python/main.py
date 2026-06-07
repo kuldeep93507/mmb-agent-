@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -25,9 +26,12 @@ from flask_cors import CORS
 
 # ── Load .env ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
+SP = Path(__file__).resolve().parent
 import sys
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(SP) not in sys.path:
+    sys.path.insert(0, str(SP))
 load_dotenv(ROOT / ".env")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -59,6 +63,112 @@ RECYCLE_FILE         = ROOT / "recycle_state.json"
 HEALTH_FILE          = ROOT / "health_stats.json"
 COMMENTS_FILE        = ROOT / "comments_data.json"
 SETTINGS_FILE        = ROOT / "user-settings.json"
+TIMERS_FILE          = ROOT / "timers_active.json"
+COOKIES_POOL_FILE    = ROOT / "cookies_pool.json"
+
+# ── Helper: load / save JSON ──────────────────────────────────────────────────
+def _load(path: Path, default=None):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default if default is not None else {}
+
+def _save(path: Path, data):
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        print(f"[Save Error] Failed to save {path}: {e}")
+
+# ── Timer background task ──────────────────────────────────────────────────
+_timers: list[dict] = []
+
+def _load_timers():
+    global _timers
+    _timers = _load(TIMERS_FILE, [])
+
+def _save_timers():
+    _save(TIMERS_FILE, _timers)
+
+async def _timer_checker_loop():
+    """Background loop to check if any timer is due."""
+    while True:
+        try:
+            now_ms = int(time.time() * 1000)
+            due_timers = [t for t in _timers if t.get("nextRun", 0) <= now_ms and t.get("status") == "active"]
+            
+            for t in due_timers:
+                print(f"[Timer] Triggering schedule: {t.get('name')} (id: {t.get('id')})")
+                # Trigger the schedule run
+                # We can't call the Flask route directly, we call the internal runner logic
+                _trigger_schedule_run(t.get("schedule", {}))
+
+                # Update next run if it's recurring, or deactivate.
+                # Frontend stores repeat as repeatEnabled + repeatInterval ('1hr','3hr','6hr','12hr','24hr')
+                # on the schedule object. Older timers may use t["repeat"] = daily/weekly.
+                interval_ms = _repeat_interval_ms(t)
+                if interval_ms > 0:
+                    # Advance nextRun past 'now' so it re-fires once per interval (no rapid catch-up loop)
+                    next_run = t.get("nextRun", now_ms)
+                    while next_run <= now_ms:
+                        next_run += interval_ms
+                    t["nextRun"] = next_run
+                else:
+                    t["status"] = "completed"
+
+            if due_timers:
+                _save_timers()
+                
+        except Exception as e:
+            print(f"[Timer Error] {e}")
+            
+        await asyncio.sleep(30) # Check every 30 seconds
+
+def _repeat_interval_ms(timer: dict) -> int:
+    """Resolve a timer's repeat interval in milliseconds.
+
+    Supports both the frontend schedule shape (repeatEnabled + repeatInterval)
+    and the legacy timer-level "repeat" field (none/daily/weekly).
+    Returns 0 when the timer should not repeat.
+    """
+    schedule = timer.get("schedule", {}) or {}
+    if schedule.get("repeatEnabled"):
+        interval_map = {
+            "1hr":  1  * 60 * 60 * 1000,
+            "3hr":  3  * 60 * 60 * 1000,
+            "6hr":  6  * 60 * 60 * 1000,
+            "12hr": 12 * 60 * 60 * 1000,
+            "24hr": 24 * 60 * 60 * 1000,
+        }
+        return interval_map.get(schedule.get("repeatInterval", "6hr"), 6 * 60 * 60 * 1000)
+
+    # Legacy fallback
+    repeat = timer.get("repeat", "none")
+    if repeat == "daily":
+        return 24 * 60 * 60 * 1000
+    if repeat == "weekly":
+        return 7 * 24 * 60 * 60 * 1000
+    return 0
+
+def _trigger_schedule_run(schedule_data: dict):
+    """Internal trigger for a scheduled (fixed-time) run.
+
+    Delegates to the same logic used by the /api/schedule/run endpoint so that
+    timers fired by _timer_checker_loop actually spawn workers.
+    """
+    if not schedule_data:
+        print("[Timer] _trigger_schedule_run called with empty schedule — skipped")
+        return
+    try:
+        result = _trigger_schedule_run_logic(schedule_data)
+        if result["error"]:
+            print(f"[Timer] Schedule '{schedule_data.get('name')}' did not run: {result['error']}")
+        else:
+            print(f"[Timer] Schedule '{schedule_data.get('name')}' started — "
+                  f"{result['spawned']} worker(s) spawned, {result['skipped']} skipped")
+    except Exception as e:
+        print(f"[Timer] _trigger_schedule_run failed: {e}")
 
 # ── In-memory state ───────────────────────────────────────────────────────────
 _workers: dict[str, dict] = {}          # profileId → worker status
@@ -82,22 +192,14 @@ def _start_loop(loop):
 
 Thread(target=_start_loop, args=(_loop,), daemon=True).start()
 
+# Load timers and start persistent schedule background loop
+_load_timers()
+_loop.call_soon_threadsafe(lambda: asyncio.create_task(_timer_checker_loop()))
+
 def run_async(coro):
     """Run coroutine in background asyncio loop, return result synchronously."""
     fut = asyncio.run_coroutine_threadsafe(coro, _loop)
     return fut.result(timeout=60)
-
-# ── Helper: load / save JSON ──────────────────────────────────────────────────
-def _load(path: Path, default=None):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default if default is not None else {}
-
-def _save(path: Path, data):
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
 
 # ── Load user-settings.json into env vars at startup ─────────────────────────
 # Ensures MultiloginProvider/MoreLoginProvider picks up saved credentials
@@ -142,24 +244,66 @@ if "proxy.smartproxy" in os.getenv("PROXY_SERVER", "").lower():
     os.environ["PROXY_SERVER"] = "us.smartproxy.net"
     log.warning("PROXY_SERVER corrected: proxy.smartproxy.net → us.smartproxy.net")
 
-def _append_log(level: str, source: str, message: str):
+def _level_from_message(message: str) -> str:
+    if not message:
+        return "info"
+    if re.search(r"error|fail|✗|crashed|❌", message, re.I):
+        return "error"
+    if re.search(r"✓|success|✅|done|complete", message, re.I):
+        return "success"
+    if re.search(r"warn|⚠|cancel", message, re.I):
+        return "warn"
+    return "info"
+
+
+def _append_log(
+    level: str,
+    source: str,
+    message: str,
+    *,
+    profile_id: str | None = None,
+    profile_name: str | None = None,
+):
     entry = {
         "id": str(uuid.uuid4())[:8],
         "level": level,
         "source": source,
         "message": message,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "timestamp": int(time.time() * 1000),
+        "profileId": profile_id,
+        "profileName": profile_name,
     }
     _log_lines.append(entry)
     if len(_log_lines) > 2000:
         del _log_lines[:-2000]
-    # Also append to file
     logs = _load(ACTIVITY_LOG_FILE, [])
     if isinstance(logs, list):
         logs.append(entry)
         if len(logs) > 5000:
             logs = logs[-5000:]
         _save(ACTIVITY_LOG_FILE, logs)
+
+
+def _normalize_log_entry(raw: dict) -> dict:
+    ts = raw.get("timestamp")
+    if isinstance(ts, str):
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            ts = int(dt.timestamp() * 1000)
+        except Exception:
+            ts = int(time.time() * 1000)
+    elif not isinstance(ts, (int, float)):
+        ts = int(time.time() * 1000)
+    return {
+        "id": raw.get("id") or str(uuid.uuid4())[:8],
+        "level": raw.get("level", "info"),
+        "source": raw.get("source", "system"),
+        "message": raw.get("message", ""),
+        "timestamp": int(ts),
+        "profileId": raw.get("profileId") or raw.get("profile_id"),
+        "profileName": raw.get("profileName") or raw.get("profile_name"),
+    }
 
 def _init_recycle_engine():
     from server_python.recycle_engine import recycle_engine
@@ -170,6 +314,18 @@ def _init_recycle_engine():
         asyncio.run_coroutine_threadsafe(recycle_engine.restore(saved), _loop)
 
 _init_recycle_engine()
+
+
+def _configure_worker_logging():
+    from server_python.worker_manager import worker_manager
+
+    def _worker_activity_log(level, source, message, profile_id=None, profile_name=None):
+        _append_log(level, source, message, profile_id=profile_id, profile_name=profile_name)
+
+    worker_manager.configure(activity_log_fn=_worker_activity_log)
+
+
+_configure_worker_logging()
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 @app.before_request
@@ -236,7 +392,12 @@ def api_health():
 def _get_provider(name: str):
     n = (name or "").lower()
     if n == "multilogin":
-        return MultiloginProvider()
+        return MultiloginProvider(
+            token=os.getenv("MULTILOGIN_TOKEN", ""),
+            email=os.getenv("MULTILOGIN_EMAIL", ""),
+            password=os.getenv("MULTILOGIN_PASSWORD", ""),
+            folder_id=os.getenv("MULTILOGIN_FOLDER_ID", ""),
+        )
     return MoreLoginProvider()
 
 @app.route("/api/profiles/list", methods=["GET", "POST"])
@@ -419,37 +580,75 @@ def api_schedules_post():
 
 @app.get("/api/schedule/timer/list")
 def api_schedule_timer_list():
-    return jsonify({"timers": []})
+    res_list = []
+    for t in _timers:
+        if t.get("status") == "active":
+            res_list.append({
+                "id": t.get("id", ""),
+                "name": t.get("name", ""),
+                "nextRun": t.get("nextRun", 0),
+                "repeat": t.get("repeat", "none")
+            })
+    return jsonify(res_list)
 
 @app.post("/api/schedule/timer/set")
 def api_schedule_timer_set():
+    body = request.get_json(silent=True) or {}
+    schedule = body.get("schedule", {})
+    sid = schedule.get("id")
+    if not sid:
+        return jsonify({"success": False, "error": "schedule id required"}), 400
+        
+    global _timers
+    # Existing active timers for this schedule ID clear karo
+    _timers = [t for t in _timers if t.get("id") != sid]
+    
+    # Naya active timer daalo
+    _timers.append({
+        "id": sid,
+        "name": schedule.get("name", "Timer"),
+        "nextRun": int(schedule.get("scheduledTime", 0)),
+        "repeat": schedule.get("repeatInterval") if schedule.get("repeatEnabled") else "none",
+        "status": "active",
+        "schedule": schedule
+    })
+    _save_timers()
     return jsonify({"success": True})
 
 @app.post("/api/schedule/timer/cancel")
 def api_schedule_timer_cancel():
+    body = request.get_json(silent=True) or {}
+    schedule_id = body.get("scheduleId", "")
+    if not schedule_id:
+        return jsonify({"success": False, "error": "scheduleId required"}), 400
+        
+    global _timers
+    # Is timer ko mark completed/cancelled karo
+    for t in _timers:
+        if t.get("id") == schedule_id:
+            t["status"] = "cancelled"
+            
+    _save_timers()
     return jsonify({"success": True})
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SCHEDULE RUN — Main automation trigger (MMB-Agent-v2 + nodriver)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.post("/api/schedule/run")
-def api_schedule_run():
-    """
-    Schedule / Shuffle run — har profile ke liye ek async worker spawn karo.
-    Worker: MoreLogin/Multilogin → nodriver CDP → YouTubeAgent (same as Engagement).
+def _trigger_schedule_run_logic(schedule: dict):
+    """Internal logic to trigger a schedule run.
+
+    Returns a dict:
+      { "spawned": int, "skipped": int, "error": str|None,
+        "trimmed": bool, "limit": int }
     """
     from server_python.worker_manager import worker_manager
     import random as _random
 
-    body     = request.get_json(silent=True) or {}
-    schedule = body.get("schedule")
-    if not schedule:
-        return jsonify({"error": "schedule required"}), 400
-
     selected_profiles = schedule.get("selectedProfiles", [])
     if not selected_profiles:
-        return jsonify({"error": "selectedProfiles required"}), 400
+        return {"spawned": 0, "skipped": 0, "error": "selectedProfiles required",
+                "trimmed": False, "limit": 0}
 
     assignment_mode  = schedule.get("assignmentMode", "same-all")
     same_for_all     = schedule.get("sameForAll", [])
@@ -462,12 +661,19 @@ def api_schedule_run():
     current_stats  = worker_manager.get_stats()
     current_running = current_stats["running"]
 
-    if current_running >= max_concurrent:
-        return jsonify({
-            "error": f"Max concurrent limit reached ({max_concurrent}). Currently {current_running} running.",
-            "running": current_running,
-            "limit": max_concurrent,
-        }), 429
+    available = max(0, max_concurrent - current_running)
+    if available <= 0:
+        return {"spawned": 0, "skipped": 0,
+                "error": f"Max concurrent limit reached ({max_concurrent})",
+                "trimmed": False, "limit": max_concurrent}
+
+    # Trim to available free slots so we never exceed the concurrency limit
+    trimmed = False
+    if len(selected_profiles) > available:
+        selected_profiles = selected_profiles[:available]
+        trimmed = True
+        _append_log("warn", "scheduler",
+                    f"Trimmed to {available} profile(s) — concurrency limit {max_concurrent}")
 
     spawned = 0
     skipped = 0
@@ -527,7 +733,7 @@ def api_schedule_run():
             "videoQuality":      pc.get("videoQuality", settings.get("ytVideoQuality", "auto")),
             "volumePct":         int(pc.get("volumePct", 75)),
             "adSkipEnabled":     pc.get("adSkipEnabled", True),
-            "adSkipAfterSec":    int(pc.get("adSkipAfterSec", 5)),
+            "adSkipAfterSec":    int(pc.get("adSkipAfterSec", 10)),
             "midRollAdWaitSec":  int(pc.get("midRollAdWaitSec", 10)),
             # ── Human behavior ──
             "seekEnabled":       pc.get("seekEnabled", True),
@@ -565,13 +771,29 @@ def api_schedule_run():
                 f'Started "{schedule_name}" — {spawned} worker(s) spawned'
                 + (f", {skipped} skipped (no videos)" if skipped else ""))
 
+    return {"spawned": spawned, "skipped": skipped, "error": None,
+            "trimmed": trimmed, "limit": max_concurrent}
+
+@app.post("/api/schedule/run")
+def api_schedule_run():
+    body     = request.get_json(silent=True) or {}
+    schedule = body.get("schedule")
+    if not schedule:
+        return jsonify({"error": "schedule required"}), 400
+
+    result = _trigger_schedule_run_logic(schedule)
+    if result["error"]:
+        status_code = 429 if "Max concurrent" in result["error"] else 400
+        return jsonify({"error": result["error"]}), status_code
+
+    spawned = result["spawned"]
     return jsonify({
         "success":        True,
         "workersSpawned": spawned,
-        "skippedNoVideos": skipped,
-        "message":        f'Schedule "{schedule_name}" started with {spawned} worker(s).',
-        "limit":          max_concurrent,
-        "running":        current_running,
+        "skippedNoVideos": result["skipped"],
+        "trimmed":        result["trimmed"],
+        "limit":          result["limit"],
+        "message":        f'Schedule started with {spawned} worker(s).',
     })
 
 @app.post("/api/schedule/stop")
@@ -646,8 +868,8 @@ def api_engagement_start():
     global_watch_pct = body.get("watchPct", 85)
     global_ad_skip   = body.get("adSkipEnabled", True)
     global_quality   = body.get("videoQuality", "auto")
-    global_ad_delay  = body.get("adSkipDelaySec", 5)
-    global_ad_delay_max = body.get("adSkipDelayMaxSec", 15)
+    global_ad_delay  = body.get("adSkipDelaySec", 10)
+    global_ad_delay_max = body.get("adSkipDelayMaxSec", 14)
 
     job_ids = []
     for p in profiles_data:
@@ -728,7 +950,16 @@ async def _run_engagement_job(job: dict, delay_sec: float = 0.0):
     def _job_log(msg: str):
         entry = {"t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "msg": msg}
         job["log"].append(entry)
+        if len(job["log"]) > 200:
+            job["log"] = job["log"][-200:]
         log.info("[Engagement][%s] %s", profile_id[:8], msg)
+        _append_log(
+            _level_from_message(msg),
+            "engagement",
+            msg,
+            profile_id=profile_id,
+            profile_name=job.get("profileName"),
+        )
 
     try:
         # ── Stagger delay ──────────────────────────────────────────────────────
@@ -789,8 +1020,27 @@ async def _run_engagement_job(job: dict, delay_sec: float = 0.0):
             # Playback settings
             "videoQuality":      job.get("videoQuality", "auto"),
             "adSkipEnabled":     job.get("adSkipEnabled", True),
-            "adSkipDelaySec":    job.get("adSkipDelaySec", 5),
-            "adSkipDelayMaxSec": job.get("adSkipDelayMaxSec", 15),
+            "adSkipDelaySec":    job.get("adSkipDelaySec", 10),
+            "adSkipDelayMaxSec": job.get("adSkipDelayMaxSec", 14),
+            "gmailLoggedIn":     bool(
+                actions.get("gmailLoggedIn")
+                or actions.get("gmailReady")
+                or job.get("gmailLoggedIn")
+                or job.get("gmailReady")
+            ),
+            "bellMode":          str(actions.get("bellMode", "personalized")),
+            "playbackSpeed":     str(
+                actions.get("playbackSpeed", job.get("playbackSpeed", "1x"))
+            ),
+            "speedChange":       bool(
+                actions.get("speedChange", actions.get("playbackSpeed", "1x") not in ("1x", "1", ""))
+            ),
+            "captionsEnabled":   bool(
+                actions.get("captionsEnabled", actions.get("captionsToggle", False))
+            ),
+            "captionsToggle":    bool(
+                actions.get("captionsToggle", actions.get("captionsEnabled", False))
+            ),
             "volumePct":         actions.get("volumePct", 75),
             "commentLikePct":    actions.get("commentLikePct", 0),
             # Human behavior settings
@@ -798,14 +1048,13 @@ async def _run_engagement_job(job: dict, delay_sec: float = 0.0):
             "seekDirection":     actions.get("seekDirection", "forward"),
             "pauseProbability":  actions.get("pauseProbability", 0.05),
             "pauseHoldSec":      actions.get("pauseHoldSec", 0),
-            "uniqueTypingPersonality": True,
-            "naturalScrollCurves":     True,
-            "scrollActivity":    actions.get("scrollActivity", True),
+            "uniqueTypingPersonality": bool(actions.get("uniqueTypingPersonality", True)),
+            "naturalScrollCurves":     bool(actions.get("naturalScrollCurves", True)),
+            "scrollActivity":    actions.get(
+                "scrollActivity",
+                actions.get("scrollActivityEnabled", True),
+            ),
             "qualityChange":     actions.get("qualityChange", actions.get("qualityChangeEnabled", True)),
-            "playbackSpeed":     actions.get("playbackSpeed", job.get("playbackSpeed", "1x")),
-            "speedChange":       actions.get("speedChange", False),
-            "captionsEnabled":   actions.get("captionsEnabled", False),
-            "captionsToggle":    actions.get("captionsToggle", False),
             "honestTest":        actions.get("honestTest", job.get("honestTest", False)),
             "profileName":       job.get("profileName", ""),
         }
@@ -915,7 +1164,7 @@ async def _run_engagement_job(job: dict, delay_sec: float = 0.0):
             except Exception as stop_exc:
                 _job_log(f"Profile stop error: {stop_exc}")
         try:
-            from behavior.youtube.action_audit import ActionAudit
+            from server_python.behavior.youtube.action_audit import ActionAudit
             audit = ActionAudit.current()
             if audit:
                 audit.record(
@@ -1256,21 +1505,48 @@ def api_analytics_reset():
 
 @app.get("/api/logs")
 def api_logs_get():
-    level  = request.args.get("level", "")
-    source = request.args.get("source", "")
-    limit  = int(request.args.get("limit", 200))
+    level      = request.args.get("level", "")
+    source     = request.args.get("source", "")
+    profile_id = request.args.get("profileId", "")
+    search     = request.args.get("search", "").strip().lower()
+    since      = int(request.args.get("since", 0) or 0)
+    limit      = int(request.args.get("limit", 200))
 
-    logs = _load(ACTIVITY_LOG_FILE, [])
-    if not isinstance(logs, list):
-        logs = []
+    file_logs = _load(ACTIVITY_LOG_FILE, [])
+    if not isinstance(file_logs, list):
+        file_logs = []
 
+    seen_ids: set[str] = set()
+    merged: list[dict] = []
+    for raw in list(_log_lines) + file_logs:
+        if not isinstance(raw, dict):
+            continue
+        eid = raw.get("id")
+        if eid and eid in seen_ids:
+            continue
+        if eid:
+            seen_ids.add(eid)
+        merged.append(_normalize_log_entry(raw))
+
+    if since:
+        merged = [l for l in merged if l["timestamp"] >= since]
     if level:
-        logs = [l for l in logs if l.get("level") == level]
+        merged = [l for l in merged if l.get("level") == level]
     if source:
-        logs = [l for l in logs if l.get("source") == source]
+        merged = [l for l in merged if l.get("source") == source]
+    if profile_id:
+        merged = [l for l in merged if l.get("profileId") == profile_id]
+    if search:
+        merged = [
+            l for l in merged
+            if search in (l.get("message") or "").lower()
+            or search in (l.get("profileName") or "").lower()
+            or search in (l.get("profileId") or "").lower()
+        ]
 
-    entries = logs[-limit:]
-    # Count by level for stats
+    merged.sort(key=lambda x: x["timestamp"], reverse=True)
+    entries = merged[:limit]
+
     stats = {"info": 0, "warn": 0, "error": 0, "success": 0}
     for l in entries:
         lvl = l.get("level", "info")
@@ -1278,8 +1554,8 @@ def api_logs_get():
             stats[lvl] += 1
 
     return jsonify({
-        "entries":  entries,           # frontend expects 'entries' not 'logs'
-        "total":    len(logs),
+        "entries":  entries,
+        "total":    len(merged),
         "filtered": len(entries),
         "stats":    stats,
     })
@@ -1291,6 +1567,8 @@ def api_logs_post():
         body.get("level", "info"),
         body.get("source", "ui"),
         body.get("message", ""),
+        profile_id=body.get("profileId"),
+        profile_name=body.get("profileName"),
     )
     return jsonify({"success": True})
 
@@ -1556,6 +1834,85 @@ def api_comments_post():
     _save(COMMENTS_FILE, {"comments": comments})
     return jsonify({"success": True})
 
+@app.post("/api/comments/ai-generate")
+def api_comments_ai_generate():
+    """Generate N AI comments. Body: {count, topic?, channel?, category?}"""
+    body = request.get_json(silent=True) or {}
+    try:
+        count = int(body.get("count", 10))
+    except Exception:
+        count = 10
+    count = max(1, min(50, count))  # safety: max 50 per call
+    topic = str(body.get("topic", "")).strip() or "general YouTube video"
+    channel = str(body.get("channel", "")).strip()
+    category = str(body.get("category", "general")).strip() or "general"
+
+    try:
+        from server_python.ai_brain import is_available, _call  # type: ignore
+    except Exception as e:
+        return jsonify({"success": False, "error": f"AI module load failed: {e}"}), 500
+
+    if not is_available():
+        return jsonify({
+            "success": False,
+            "error": "AI not configured — set ANTHROPIC_API_KEY in .env",
+        }), 400
+
+    # Single batched prompt (cheaper, faster than N separate calls)
+    prompt = (
+        f"Generate exactly {count} short YouTube comments for this topic: \"{topic}\""
+        + (f" on channel \"{channel}\"" if channel else "")
+        + ".\n\n"
+        "Rules:\n"
+        "- Each comment: 1-2 sentences max\n"
+        "- Sound like real viewers, NOT bots — varied tone, perspectives, lengths\n"
+        "- Mix: positive, curious, questioning, encouraging, casual\n"
+        "- No hashtags, no excessive emojis (max 1 per comment, occasional)\n"
+        "- Each comment on its own line\n"
+        "- NO numbering, NO quotes, NO bullets — just plain text lines\n"
+        "Output ONLY the comments, one per line."
+    )
+
+    raw = _call(prompt, max_tokens=count * 60)
+    if not raw:
+        return jsonify({"success": False, "error": "AI returned no content"}), 502
+
+    # Parse lines — strip numbering/quotes/bullets defensively
+    import re as _re
+    lines = []
+    for line in raw.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        # Strip "1.", "1)", "-", "*", quotes
+        s = _re.sub(r"^[\d]+[\.\)]\s*", "", s)
+        s = _re.sub(r"^[-*•]\s*", "", s)
+        s = s.strip(' "\'`')
+        if len(s) >= 5:
+            lines.append(s)
+
+    # Limit to requested count
+    lines = lines[:count]
+
+    if not lines:
+        return jsonify({"success": False, "error": "AI output could not be parsed"}), 502
+
+    # Build template objects
+    import time as _time
+    base_id = int(_time.time() * 1000)
+    new_templates = [
+        {
+            "id": str(base_id + i),
+            "text": text,
+            "category": category,
+            "usedCount": 0,
+        }
+        for i, text in enumerate(lines)
+    ]
+
+    _append_log("success", "comments", f"AI generated {len(new_templates)} comments (topic: {topic[:40]})")
+    return jsonify({"success": True, "templates": new_templates, "count": len(new_templates)})
+
 @app.get("/api/profile-configs")
 def api_profile_configs_get():
     data = _load(SETTINGS_FILE, {})
@@ -1574,7 +1931,7 @@ def api_profile_config_get(profile_id: str):
     cfg = next((c for c in configs if c.get("id") == profile_id), {})
     return jsonify(cfg)
 
-@app.post("/api/profile-config/<profile_id>")
+@app.route("/api/profile-config/<profile_id>", methods=["POST", "PUT"])
 def api_profile_config_post(profile_id: str):
     body = request.get_json(silent=True) or {}
     data = _load(SETTINGS_FILE, {})
@@ -1647,51 +2004,265 @@ def api_android_devices():
 # ── Cookies (extended) ────────────────────────────────────────────────────────
 @app.post("/api/cookies/import")
 def api_cookies_import():
-    return jsonify({"code": 0, "message": "Not implemented"})
+    body = request.get_json(silent=True) or {}
+    cookies_arr = body.get("cookies", [])
+    label = body.get("label") or f"Set {int(time.time())}"
+    
+    pool = _load(COOKIES_POOL_FILE, {"sets": []})
+    sets = pool.get("sets", [])
+    
+    import uuid
+    set_id = f"set_{str(uuid.uuid4())[:8]}"
+    
+    new_set = {
+        "id": set_id,
+        "label": label,
+        "importedAt": int(time.time() * 1000),
+        "cookies": cookies_arr,
+        "count": len(cookies_arr)
+    }
+    sets.append(new_set)
+    pool["sets"] = sets
+    _save(COOKIES_POOL_FILE, pool)
+    
+    return jsonify({
+        "success": True,
+        "count": len(cookies_arr),
+        "poolSize": len(sets)
+    })
 
 @app.post("/api/cookies/clear")
 def api_cookies_clear():
-    return jsonify({"code": 0, "message": "Cleared"})
+    _save(COOKIES_POOL_FILE, {"sets": []})
+    return jsonify({"code": 0, "message": "Cleared", "success": True})
 
 @app.get("/api/cookies/metadata")
 def api_cookies_metadata():
-    return jsonify({"code": 0, "metadata": {}})
+    pool = _load(COOKIES_POOL_FILE, {"sets": []})
+    sets = pool.get("sets", [])
+    return jsonify({
+        "code": 0,
+        "metadata": {
+            "totalSets": len(sets),
+            "totalCookies": sum(s.get("count", 0) for s in sets)
+        }
+    })
 
 @app.route("/api/cookies/set/<set_id>", methods=["GET", "DELETE"])
 def api_cookies_set(set_id: str):
-    return jsonify({"code": 0})
+    pool = _load(COOKIES_POOL_FILE, {"sets": []})
+    sets = pool.get("sets", [])
+    
+    if request.method == "DELETE":
+        sets = [s for s in sets if s.get("id") != set_id]
+        pool["sets"] = sets
+        _save(COOKIES_POOL_FILE, pool)
+        return jsonify({"success": True, "message": f"Deleted cookie set {set_id}"})
+        
+    curr_set = next((s for s in sets if s.get("id") == set_id), None)
+    if not curr_set:
+        return jsonify({"error": "Set not found"}), 404
+    return jsonify(curr_set)
 
 # ── Gmail Login Manager ───────────────────────────────────────────────────────
 _gmail_jobs: list = []
+_gmail_running: bool = False
+
+async def _automate_gmail_login(profile_id: str, email: str, password: str) -> tuple[bool, str, str]:
+    """Automation to login to Gmail inside Chrome profile via CDP/nodriver."""
+    from server_python.providers.morelogin import MoreLoginProvider
+    from server_python.providers.multilogin import MultiloginProvider
+    import nodriver as uc
+    
+    provider_name = _load(SETTINGS_FILE, {}).get("browserProvider", "multilogin")
+    provider = MultiloginProvider() if provider_name == "multilogin" else MoreLoginProvider()
+    
+    try:
+        start_res = await provider.start_profile(profile_id)
+        # MLX returns port at data.cdpPort; MoreLogin returns at cdp_port / port
+        cdp_port = (
+            (start_res.get("data") or {}).get("cdpPort")
+            or start_res.get("cdp_port")
+            or start_res.get("port")
+        )
+        if not cdp_port:
+            return False, "error", "Failed to retrieve browser debug CDP port"
+    except Exception as e:
+        return False, "error", f"Browser failed to start: {e}"
+        
+    try:
+        browser = await uc.start(host="127.0.0.1", port=int(cdp_port), headless=False)
+        tab = browser.main_tab
+    except Exception as e:
+        return False, "error", f"Could not connect nodriver CDP: {e}"
+        
+    try:
+        await tab.get("https://accounts.google.com/ServiceLogin?hl=en")
+        await asyncio.sleep(3)
+        
+        url = tab.url
+        if "myaccount.google.com" in url or "google.com" not in url:
+            await provider.stop_profile(profile_id)
+            return True, "success", "Already logged in ✓"
+            
+        email_input = await tab.select("input[type='email']")
+        if not email_input:
+            pass_input = await tab.select("input[type='password']")
+            if not pass_input:
+                await provider.stop_profile(profile_id)
+                return False, "error", "Could not locate email/password field"
+        else:
+            await email_input.send_keys(email)
+            await asyncio.sleep(1)
+            next_btn = await tab.select("#identifierNext")
+            if next_btn:
+                await next_btn.click()
+            else:
+                await tab.send(uc.cdp.input.dispatch_key_event(type="rawKeyDown", windows_virtual_key_code=13))
+                
+            await asyncio.sleep(4)
+            
+        url = tab.url
+        if "challenge/phone" in url:
+            return False, "needs_phone", "Requires Phone/OTP verification — Please complete manually in the browser window"
+        elif "challenge/captcha" in url:
+            return False, "captcha", "Google CAPTCHA triggered — Please solve manually in the browser window"
+            
+        pass_input = await tab.select("input[type='password']")
+        if not pass_input:
+            await provider.stop_profile(profile_id)
+            return False, "error", "Password input field not found"
+            
+        await pass_input.send_keys(password)
+        await asyncio.sleep(1)
+        next_btn = await tab.select("#passwordNext")
+        if next_btn:
+            await next_btn.click()
+        else:
+            await tab.send(uc.cdp.input.dispatch_key_event(type="rawKeyDown", windows_virtual_key_code=13))
+            
+        await asyncio.sleep(6)
+        
+        url = tab.url
+        if "challenge/phone" in url or "challenge/sms" in url:
+            return False, "needs_phone", "OTP verification required — Please complete manually in browser window"
+        elif "challenge/pwd" in url or "wrongpassword" in url:
+            await provider.stop_profile(profile_id)
+            return False, "wrong_password", "Wrong password provided!"
+        elif "challenge" in url:
+            return False, "blocked", "Security Challenge/Blocked — Please review in opened browser"
+            
+        await provider.stop_profile(profile_id)
+        return True, "success", "Successfully logged in ✓"
+        
+    except Exception as e:
+        try:
+            await provider.stop_profile(profile_id)
+        except:
+            pass
+        return False, "error", f"Login automation error: {e}"
+
+async def _run_gmail_jobs_task():
+    global _gmail_running, _gmail_jobs
+    try:
+        while _gmail_running:
+            pending = [j for j in _gmail_jobs if j.get("status") in ("pending", "retry")]
+            if not pending:
+                _gmail_running = False
+                break
+                
+            job = pending[0]
+            job["status"] = "running"
+            job["message"] = "Starting login automation..."
+            
+            pid = job.get("profileId")
+            email = job.get("email")
+            password = job.get("password")
+            
+            success, status_type, msg = await _automate_gmail_login(pid, email, password)
+            job["status"] = status_type
+            job["message"] = msg
+            
+            await asyncio.sleep(5)
+            
+    except Exception as e:
+        print(f"Error in Gmail jobs task: {e}")
+    finally:
+        _gmail_running = False
 
 @app.get("/api/gmail-login/status")
 def api_gmail_status():
-    return jsonify({"code": 0, "data": {"jobs": _gmail_jobs, "running": False}})
+    return jsonify({"code": 0, "data": {"jobs": _gmail_jobs, "running": _gmail_running}})
 
 @app.post("/api/gmail-login/start")
 def api_gmail_start():
-    return jsonify({"code": 0, "message": "Gmail login not implemented yet"})
+    body = request.get_json(silent=True) or {}
+    credentials = body.get("credentials", [])
+    
+    global _gmail_jobs, _gmail_running
+    _gmail_jobs = []
+    
+    for cred in credentials:
+        pid = cred.get("profileId", "")
+        email = cred.get("email", "")
+        password = cred.get("password", "")
+        if pid and email and password:
+            _gmail_jobs.append({
+                "profileId": pid,
+                "email": email,
+                "password": password,
+                "status": "pending",
+                "message": "Waiting to start..."
+            })
+            
+    if _gmail_jobs:
+        _gmail_running = True
+        asyncio.run_coroutine_threadsafe(_run_gmail_jobs_task(), _loop)
+        return jsonify({"code": 0, "ok": True, "message": "Gmail login task started"})
+    else:
+        return jsonify({"code": 0, "ok": False, "error": "No valid profiles/credentials provided"})
 
 @app.post("/api/gmail-login/stop")
 def api_gmail_stop():
-    return jsonify({"code": 0})
+    global _gmail_running
+    _gmail_running = False
+    return jsonify({"code": 0, "success": True})
 
 @app.post("/api/gmail-login/clear")
 def api_gmail_clear():
     _gmail_jobs.clear()
-    return jsonify({"code": 0})
+    return jsonify({"code": 0, "success": True})
 
 @app.post("/api/gmail-login/mark-done/<job_id>")
 def api_gmail_mark_done(job_id: str):
-    return jsonify({"code": 0})
+    global _gmail_jobs
+    for j in _gmail_jobs:
+        if j.get("profileId") == job_id:
+            j["status"] = "success"
+            j["message"] = "Logged in successfully ✓"
+    return jsonify({"code": 0, "success": True})
 
 @app.post("/api/gmail-login/retry/<job_id>")
 def api_gmail_retry(job_id: str):
-    return jsonify({"code": 0})
+    global _gmail_jobs, _gmail_running
+    for j in _gmail_jobs:
+        if j.get("profileId") == job_id:
+            j["status"] = "retry"
+            j["message"] = "Retrying login..."
+            
+    if not _gmail_running:
+        _gmail_running = True
+        asyncio.run_coroutine_threadsafe(_run_gmail_jobs_task(), _loop)
+    return jsonify({"code": 0, "success": True})
 
 @app.post("/api/gmail-login/skip/<job_id>")
 def api_gmail_skip(job_id: str):
-    return jsonify({"code": 0})
+    global _gmail_jobs
+    for j in _gmail_jobs:
+        if j.get("profileId") == job_id:
+            j["status"] = "skipped"
+            j["message"] = "Skipped by user"
+    return jsonify({"code": 0, "success": True})
 
 # ── Watch History (alternate path) ───────────────────────────────────────────
 @app.get("/api/history/<profile_id>")
@@ -1711,11 +2282,17 @@ def api_manual_start():
 def api_manual_batch():
     body = request.get_json(silent=True) or {}
     profiles = body.get("profiles", [])
+    profile_ids = body.get("profileIds", [])
+    
+    pids = list(profile_ids)
     for p in profiles:
         pid = p.get("profileId") or p.get("id", "")
-        if pid:
-            _workers[pid] = {"profileId": pid, "status": "pending", "startedAt": int(time.time() * 1000)}
-    return jsonify({"code": 0, "message": f"Queued {len(profiles)} profiles"})
+        if pid and pid not in pids:
+            pids.append(pid)
+            
+    for pid in pids:
+        _workers[pid] = {"profileId": pid, "status": "pending", "startedAt": int(time.time() * 1000)}
+    return jsonify({"code": 0, "message": f"Queued {len(pids)} profiles"})
 
 # ── Workers extended ─────────────────────────────────────────────────────────
 @app.post("/api/workers/clear-completed")

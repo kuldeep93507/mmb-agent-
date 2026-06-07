@@ -1,0 +1,18 @@
+{
+  "profile_id": "a8c2240f-88b5-4bf5-a18d-d420d43f61f0",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Arlington",
+  "timezone": "America/Chicago",
+  "lat": 32.754,
+  "lon": -97.1363,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 379049689,
+  "canvas_noise": 0.003145,
+  "webgl_noise": 0.001092,
+  "audio_noise": 8.189e-05,
+  "cached_at": 1780672093.361728
+}

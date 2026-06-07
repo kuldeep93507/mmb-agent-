@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MMB — View Scheduler</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+  a{color:#60a5fa;text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* NAV */
+  .nav{background:#1a1d2e;border-bottom:1px solid #2d3748;padding:12px 24px;display:flex;align-items:center;gap:20px}
+  .nav-title{font-size:18px;font-weight:700;color:#60a5fa}
+  .nav a{color:#94a3b8;font-size:14px}
+  .nav a:hover{color:#e2e8f0}
+
+  /* LAYOUT */
+  .page{max-width:1300px;margin:0 auto;padding:24px 20px}
+  .grid2{display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start}
+
+  /* CARD */
+  .card{background:#1a1d2e;border:1px solid #2d3748;border-radius:12px;padding:20px}
+  .card-title{font-size:14px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px}
+
+  /* FORM */
+  .form-group{margin-bottom:14px}
+  label{display:block;font-size:12px;color:#94a3b8;margin-bottom:5px;font-weight:500}
+  input,select{width:100%;background:#0f1117;border:1px solid #374151;border-radius:8px;padding:9px 12px;color:#e2e8f0;font-size:14px;outline:none;transition:border-color .2s}
+  input:focus,select:focus{border-color:#60a5fa}
+  input[type=range]{padding:6px 0;cursor:pointer}
+  .range-row{display:flex;gap:10px;align-items:center}
+  .range-row input{flex:1}
+  .range-val{min-width:45px;text-align:right;font-weight:600;color:#60a5fa;font-size:14px}
+  .hint{font-size:11px;color:#64748b;margin-top:4px}
+
+  /* BUTTONS */
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:all .15s}
+  .btn-primary{background:#3b82f6;color:#fff}
+  .btn-primary:hover{background:#2563eb}
+  .btn-green{background:#10b981;color:#fff}
+  .btn-green:hover{background:#059669}
+  .btn-yellow{background:#f59e0b;color:#111}
+  .btn-yellow:hover{background:#d97706}
+  .btn-red{background:#ef4444;color:#fff}
+  .btn-red:hover{background:#dc2626}
+  .btn-ghost{background:#2d3748;color:#e2e8f0}
+  .btn-ghost:hover{background:#374151}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+
+  /* STATS BAR */
+  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .stat-box{background:#1a1d2e;border:1px solid #2d3748;border-radius:10px;padding:14px 16px;text-align:center}
+  .stat-val{font-size:26px;font-weight:700;color:#60a5fa}
+  .stat-lbl{font-size:11px;color:#64748b;margin-top:3px;text-transform:uppercase;letter-spacing:.04em}
+
+  /* PROGRESS */
+  .prog-wrap{background:#0f1117;border-radius:999px;height:10px;overflow:hidden;margin:10px 0}
+  .prog-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#3b82f6,#10b981);transition:width .5s}
+
+  /* STATUS BADGE */
+  .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}
+  .badge-idle{background:#1e293b;color:#64748b}
+  .badge-running{background:#064e3b;color:#34d399}
+  .badge-paused{background:#451a03;color:#fbbf24}
+  .badge-stopped{background:#450a0a;color:#f87171}
+
+  /* SCHEDULE TABLE */
+  .tbl-wrap{overflow-x:auto;margin-top:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#0f1117;color:#64748b;font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid #2d3748;white-space:nowrap}
+  td{padding:8px 12px;border-bottom:1px solid #1e293b;vertical-align:top}
+  tr:hover td{background:#1e293b33}
+  .hour-row td{background:#1a1d2e;font-weight:600;color:#60a5fa}
+  .slot-pills{display:flex;flex-wrap:wrap;gap:4px;max-height:80px;overflow-y:auto}
+  .slot-pill{background:#1e293b;border:1px solid #374151;border-radius:5px;padding:2px 7px;font-size:11px;color:#94a3b8;white-space:nowrap}
+  .slot-pill.done{background:#064e3b;border-color:#065f46;color:#6ee7b7}
+  .slot-pill.running{background:#1e3a5f;border-color:#1d4ed8;color:#93c5fd;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+  /* LOG */
+  .log-box{background:#0a0d14;border:1px solid #1e293b;border-radius:8px;padding:12px;height:200px;overflow-y:auto;font-size:12px;font-family:'Consolas',monospace;color:#94a3b8;margin-top:12px}
+  .log-box .line-ok{color:#34d399}
+  .log-box .line-run{color:#60a5fa}
+  .log-box .line-wait{color:#64748b}
+  .log-box .line-stop{color:#f87171}
+
+  /* SUMMARY */
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:12px}
+  .sum-box{background:#0f1117;border:1px solid #2d3748;border-radius:8px;padding:10px;text-align:center}
+  .sum-val{font-size:18px;font-weight:700;color:#e2e8f0}
+  .sum-lbl{font-size:10px;color:#64748b;margin-top:2px}
+
+  /* SECTION TITLE */
+  h2{font-size:16px;font-weight:700;margin-bottom:16px;color:#e2e8f0}
+  .section-sep{border:none;border-top:1px solid #2d3748;margin:20px 0}
+
+  .alert{background:#451a03;border:1px solid #92400e;border-radius:8px;padding:12px 16px;font-size:13px;color:#fcd34d;margin-bottom:16px}
+  .success{background:#064e3b;border-color:#065f46;color:#6ee7b7}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <span class="nav-title">MMB Agent</span>
+  <a href="/">Dashboard</a>
+  <a href="/scheduler" style="color:#60a5fa">View Scheduler</a>
+</div>
+
+<div class="page">
+
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="stat-box">
+      <div class="stat-val" id="sv-done">0</div>
+      <div class="stat-lbl">Views Done</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="sv-total">0</div>
+      <div class="stat-lbl">Views Planned</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="sv-hour">—</div>
+      <div class="stat-lbl">Current Hour</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val" id="sv-profile" style="font-size:16px;line-height:1.6">—</div>
+      <div class="stat-lbl">Active Profile</div>
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="card" style="margin-bottom:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-size:13px;color:#94a3b8">Overall Progress</span>
+      <span id="sv-pct" style="font-size:13px;font-weight:700;color:#60a5fa">0%</span>
+    </div>
+    <div class="prog-wrap"><div class="prog-fill" id="sv-progbar" style="width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+      <span id="sv-status-badge" class="badge badge-idle">IDLE</span>
+      <div class="btn-row" style="margin:0">
+        <button class="btn btn-green" id="btn-run" onclick="schedStart()">▶ RUN</button>
+        <button class="btn btn-yellow" id="btn-pause" onclick="schedPause()" disabled>⏸ PAUSE</button>
+        <button class="btn btn-red" id="btn-stop" onclick="schedStop()" disabled>⏹ STOP</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2">
+
+    <!-- LEFT: CONFIG PANEL -->
+    <div>
+      <div class="card">
+        <div class="card-title">Schedule Config</div>
+
+        <div class="form-group">
+          <label>Channel Name (optional)</label>
+          <input type="text" id="cf-channel" placeholder="e.g. TechBurner"/>
+        </div>
+
+        <div class="form-group">
+          <label>Video ID (optional)</label>
+          <input type="text" id="cf-videoid" placeholder="e.g. dQw4w9WgXcQ"/>
+        </div>
+
+        <div class="form-group">
+          <label>Total Views Target</label>
+          <div class="range-row">
+            <input type="range" id="cf-views" min="100" max="5000" step="50" value="1000" oninput="updateVal('cf-views','rv-views')"/>
+            <span class="range-val" id="rv-views">1000</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Duration (hours)</label>
+          <div class="range-row">
+            <input type="range" id="cf-hours" min="1" max="24" step="1" value="12" oninput="updateVal('cf-hours','rv-hours')"/>
+            <span class="range-val" id="rv-hours">12</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Views per Hour — Min</label>
+          <div class="range-row">
+            <input type="range" id="cf-vph-min" min="10" max="200" step="5" value="70" oninput="updateVal('cf-vph-min','rv-vph-min');syncVphMax()"/>
+            <span class="range-val" id="rv-vph-min">70</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Views per Hour — Max</label>
+          <div class="range-row">
+            <input type="range" id="cf-vph-max" min="10" max="200" step="5" value="100" oninput="updateVal('cf-vph-max','rv-vph-max')"/>
+            <span class="range-val" id="rv-vph-max">100</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Profile Count</label>
+          <div class="range-row">
+            <input type="range" id="cf-profiles" min="10" max="500" step="10" value="100" oninput="updateVal('cf-profiles','rv-profiles')"/>
+            <span class="range-val" id="rv-profiles">100</span>
+          </div>
+          <div class="hint">Kitne unique profiles use honge</div>
+        </div>
+
+        <div class="form-group">
+          <label>Start Time (HH:MM)</label>
+          <input type="time" id="cf-starttime" value="10:00"/>
+        </div>
+
+        <div class="form-group">
+          <label>Stagger Between Profiles (seconds)</label>
+          <div class="range-row">
+            <input type="range" id="cf-stagger" min="5" max="120" step="5" value="30" oninput="updateVal('cf-stagger','rv-stagger')"/>
+            <span class="range-val" id="rv-stagger">30s</span>
+          </div>
+          <div class="hint">Har profile ke beech ka gap</div>
+        </div>
+
+        <hr class="section-sep"/>
+
+        <button class="btn btn-primary" style="width:100%" onclick="buildSchedule()">
+          ⚡ Generate Schedule
+        </button>
+
+        <div id="build-msg" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <!-- SUMMARY -->
+      <div class="card" style="margin-top:16px" id="summary-card" style="display:none">
+        <div class="card-title">Schedule Summary</div>
+        <div class="summary-grid" id="summary-grid"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: SCHEDULE TABLE + LOGS -->
+    <div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Hourly Schedule</h2>
+          <span id="schedule-meta" style="font-size:12px;color:#64748b"></span>
+        </div>
+        <div id="no-schedule" style="color:#64748b;font-size:13px;padding:30px 0;text-align:center">
+          Config set karo aur "Generate Schedule" click karo
+        </div>
+        <div class="tbl-wrap" id="schedule-table-wrap" style="display:none">
+          <table id="schedule-table">
+            <thead>
+              <tr>
+                <th>Hour</th>
+                <th>Start At</th>
+                <th>Views</th>
+                <th>Profiles (slot time)</th>
+              </tr>
+            </thead>
+            <tbody id="schedule-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- LIVE LOG -->
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="card-title" style="margin:0">Live Log</div>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="log-box" id="log-box"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let scheduleData = null;
+let pollTimer    = null;
+let lastLogCount = 0;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function updateVal(rangeId, lblId){
+  const v = document.getElementById(rangeId).value;
+  const lbl = document.getElementById(lblId);
+  if(rangeId === 'cf-stagger') lbl.textContent = v + 's';
+  else lbl.textContent = v;
+}
+
+function syncVphMax(){
+  const mn = parseInt(document.getElementById('cf-vph-min').value);
+  const mx = document.getElementById('cf-vph-max');
+  if(parseInt(mx.value) < mn){ mx.value = mn; document.getElementById('rv-vph-max').textContent = mn; }
+}
+
+function showMsg(id, msg, ok=true){
+  const el = document.getElementById(id);
+  el.style.display = 'block';
+  el.className = ok ? 'alert success' : 'alert';
+  el.textContent = msg;
+}
+
+function formatTime(ts){
+  if(!ts) return '—';
+  const d = new Date(ts*1000);
+  return d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+// ── Build Schedule ─────────────────────────────────────────────────────────
+async function buildSchedule(){
+  const body = {
+    total_views:        parseInt(document.getElementById('cf-views').value),
+    duration_hours:     parseInt(document.getElementById('cf-hours').value),
+    views_per_hour_min: parseInt(document.getElementById('cf-vph-min').value),
+    views_per_hour_max: parseInt(document.getElementById('cf-vph-max').value),
+    profile_count:      parseInt(document.getElementById('cf-profiles').value),
+    start_time:         document.getElementById('cf-starttime').value,
+    stagger_seconds:    parseInt(document.getElementById('cf-stagger').value),
+    channel_name:       document.getElementById('cf-channel').value.trim(),
+    video_id:           document.getElementById('cf-videoid').value.trim(),
+  };
+
+  showMsg('build-msg','Generating...', true);
+
+  try{
+    const r = await fetch('/api/scheduler/build',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!d.ok){ showMsg('build-msg','Error: '+d.error, false); return; }
+
+    scheduleData = d.schedule;
+    document.getElementById('sv-total').textContent = d.total_scheduled;
+    document.getElementById('schedule-meta').textContent = `${d.hours} hours • ${d.total_scheduled} views planned`;
+
+    renderTable(d.schedule, d.total_scheduled, body);
+    showMsg('build-msg', `✓ Schedule ready — ${d.total_scheduled} views across ${d.hours} hours`, true);
+  } catch(e){
+    showMsg('build-msg','Network error: '+e.message, false);
+  }
+}
+
+function renderTable(schedule, total, cfg){
+  const tbody = document.getElementById('schedule-tbody');
+  tbody.innerHTML = '';
+
+  for(const slot of schedule){
+    const tr = document.createElement('tr');
+    tr.className = 'hour-row';
+    tr.id = `hour-${slot.hour}`;
+
+    // Pills for profiles
+    const pills = slot.slots.map(s =>
+      `<span class="slot-pill" id="pill-${slot.hour}-${s.profile_idx}" title="${formatTime(s.run_at_ts)} | Watch ${(s.watch_pct*100).toFixed(0)}%">${s.profile_label} ${s.run_at_time.slice(0,5)}</span>`
+    ).join('');
+
+    tr.innerHTML = `
+      <td>H${slot.hour}</td>
+      <td>${slot.hour_start}</td>
+      <td><b>${slot.views_this_hour}</b></td>
+      <td><div class="slot-pills">${pills}</div></td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Summary
+  document.getElementById('no-schedule').style.display='none';
+  document.getElementById('schedule-table-wrap').style.display='block';
+  document.getElementById('summary-card').style.display='block';
+
+  const avgVph = Math.round(total / schedule.length);
+  document.getElementById('summary-grid').innerHTML = `
+    <div class="sum-box"><div class="sum-val">${total}</div><div class="sum-lbl">Total Views</div></div>
+    <div class="sum-box"><div class="sum-val">${schedule.length}h</div><div class="sum-lbl">Duration</div></div>
+    <div class="sum-box"><div class="sum-val">${avgVph}</div><div class="sum-lbl">Avg/Hour</div></div>
+    <div class="sum-box"><div class="sum-val">${cfg.profile_count}</div><div class="sum-lbl">Profiles</div></div>
+    <div class="sum-box"><div class="sum-val">${cfg.stagger_seconds}s</div><div class="sum-lbl">Stagger</div></div>
+    <div class="sum-box"><div class="sum-val">${cfg.start_time}</div><div class="sum-lbl">Start Time</div></div>
+  `;
+}
+
+// ── Controls ───────────────────────────────────────────────────────────────
+async function schedStart(){
+  if(!scheduleData){ alert('Pehle schedule generate karo!'); return; }
+  const r = await fetch('/api/scheduler/start',{method:'POST'});
+  const d = await r.json();
+  if(!d.ok){ alert('Error: '+d.error); return; }
+  startPoll();
+  updateBtns(true, false);
+}
+
+async function schedPause(){
+  const r = await fetch('/api/scheduler/pause',{method:'POST'});
+  const d = await r.json();
+  if(d.ok) updateBtns(true, d.paused);
+}
+
+async function schedStop(){
+  if(!confirm('Stop scheduler?')) return;
+  await fetch('/api/scheduler/stop',{method:'POST'});
+  updateBtns(false, false);
+  stopPoll();
+}
+
+function updateBtns(running, paused){
+  document.getElementById('btn-run').disabled   = running;
+  document.getElementById('btn-pause').disabled = !running;
+  document.getElementById('btn-stop').disabled  = !running;
+  document.getElementById('btn-pause').textContent = paused ? '▶ RESUME' : '⏸ PAUSE';
+
+  const badge = document.getElementById('sv-status-badge');
+  if(!running){ badge.className='badge badge-idle'; badge.textContent='IDLE'; }
+  else if(paused){ badge.className='badge badge-paused'; badge.textContent='PAUSED'; }
+  else { badge.className='badge badge-running'; badge.textContent='RUNNING'; }
+}
+
+// ── Poll Status ────────────────────────────────────────────────────────────
+function startPoll(){ if(!pollTimer) pollTimer = setInterval(pollStatus, 2000); }
+function stopPoll(){ clearInterval(pollTimer); pollTimer=null; }
+
+async function pollStatus(){
+  try{
+    const r = await fetch('/api/scheduler/status');
+    const d = await r.json();
+
+    const stats = d.stats;
+    const done  = stats.views_done || 0;
+    const total = stats.views_total || 0;
+    const pct   = total > 0 ? Math.round(done/total*100) : 0;
+
+    document.getElementById('sv-done').textContent    = done;
+    document.getElementById('sv-total').textContent   = total;
+    document.getElementById('sv-hour').textContent    = stats.current_hour || '—';
+    document.getElementById('sv-profile').textContent = stats.current_profile || '—';
+    document.getElementById('sv-pct').textContent     = pct+'%';
+    document.getElementById('sv-progbar').style.width = pct+'%';
+
+    updateBtns(d.active, d.paused);
+
+    if(!d.active && pollTimer) stopPoll();
+
+    // Logs
+    const logBox = document.getElementById('log-box');
+    const lines  = d.log || [];
+    if(lines.length !== lastLogCount){
+      lastLogCount = lines.length;
+      logBox.innerHTML = lines.map(l => {
+        let cls = '';
+        if(l.includes('✓')) cls='line-ok';
+        else if(l.includes('▶')) cls='line-run';
+        else if(l.includes('Wait')) cls='line-wait';
+        else if(l.includes('stop')||l.includes('Stop')) cls='line-stop';
+        return `<div class="${cls}">${escHtml(l)}</div>`;
+      }).join('');
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  } catch(e){}
+}
+
+function clearLog(){
+  document.getElementById('log-box').innerHTML='';
+  lastLogCount=0;
+}
+
+function escHtml(t){
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Init all range display values
+  ['cf-views','cf-hours','cf-vph-min','cf-vph-max','cf-profiles','cf-stagger'].forEach(id=>{
+    const lbl = id.replace('cf-','rv-');
+    updateVal(id, lbl);
+  });
+  // Check if already running
+  pollStatus();
+  startPoll();
+});
+</script>
+</body>
+</html>

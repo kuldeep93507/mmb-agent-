@@ -6,10 +6,32 @@ import { backendFetch } from '../services/backendOrigin';
 type ActiveProvider = 'morelogin' | 'multilogin' | 'all';
 type CreateProvider = 'morelogin' | 'multilogin';
 
+// Common screen resolutions (desktop / mobile)
+const RESOLUTION_OPTIONS_DESKTOP = [
+  { value: '1920x1080', label: '1920×1080 (Full HD)', recommended: true },
+  { value: '1366x768',  label: '1366×768 (Laptop)',   recommended: false },
+  { value: '1536x864',  label: '1536×864',             recommended: false },
+  { value: '1440x900',  label: '1440×900 (MacBook)',   recommended: false },
+  { value: '2560x1440', label: '2560×1440 (2K)',       recommended: false },
+  { value: '3840x2160', label: '3840×2160 (4K)',       recommended: false },
+  { value: '1280x720',  label: '1280×720 (HD)',        recommended: false },
+  { value: 'auto',      label: '🎲 Auto (proxy region pool)', recommended: false },
+] as const;
+
+const RESOLUTION_OPTIONS_MOBILE = [
+  { value: '414x896',  label: '414×896 (iPhone XR/11)',   recommended: true },
+  { value: '390x844',  label: '390×844 (iPhone 12-15)',   recommended: false },
+  { value: '430x932',  label: '430×932 (iPhone Pro Max)', recommended: false },
+  { value: '360x800',  label: '360×800 (Android common)', recommended: false },
+  { value: '412x915',  label: '412×915 (Pixel)',          recommended: false },
+  { value: '393x873',  label: '393×873 (Pixel 7)',        recommended: false },
+  { value: 'auto',     label: '🎲 Auto (device pool)',    recommended: false },
+] as const;
+
 interface NewProfileModalProps {
   onClose: () => void;
   activeProvider?: ActiveProvider;
-  onCreate: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string) => Promise<{ code: number; message?: string }>;
+  onCreate: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string) => Promise<{ code: number; message?: string }>;
 }
 
 const FALLBACK_ANDROID = [
@@ -69,7 +91,18 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
       .catch(() => { /* keep default */ });
   }, []);
   const [androidDevice, setAndroidDevice] = useState<string>('auto');
+  const [resolution, setResolution] = useState<string>('1920x1080');
   const [count, setCount] = useState(1);
+
+  // Switch default resolution when OS changes (mobile vs desktop pools)
+  useEffect(() => {
+    if (selectedOS === 'Android') {
+      // Only auto-switch if current value is desktop default
+      setResolution(prev => prev === '1920x1080' ? '414x896' : prev);
+    } else if (selectedOS === 'Windows' || selectedOS === 'macOS') {
+      setResolution(prev => prev === '414x896' ? '1920x1080' : prev);
+    }
+  }, [selectedOS]);
   const [creating, setCreating] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number; errors: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +189,7 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
 
     for (const i of indices) {
       try {
-        const result = await onCreate(selectedOS, proxyType, profileMode, deviceArg);
+        const result = await onCreate(selectedOS, proxyType, profileMode, deviceArg, resolution);
         if (result.code === 0) {
           done++;
           setProgress({ done, total: count, errors: [...errors] });
@@ -314,6 +347,37 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
                 </div>
               )}
 
+              {/* ── RESOLUTION PICKER (visible when OS selected) ── */}
+              {selectedOS && (
+                <div>
+                  <p className="text-white font-semibold text-sm mb-1">
+                    <span className="text-cyan-400">🖥️</span> Screen Resolution
+                    <span className="ml-2 text-xs text-gray-500 font-normal">Profile screen size — affects fingerprint</span>
+                  </p>
+                  <select
+                    value={resolution}
+                    onChange={e => setResolution(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                  >
+                    {(selectedOS === 'Android' ? RESOLUTION_OPTIONS_MOBILE : RESOLUTION_OPTIONS_DESKTOP).map(opt => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}{opt.recommended ? ' ⭐ Recommended' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {resolution !== 'auto' && (
+                    <p className="text-xs text-cyan-400 mt-1.5">
+                      ✅ Will use: <span className="font-mono font-medium">{resolution}</span>
+                    </p>
+                  )}
+                  {resolution === 'auto' && (
+                    <p className="text-xs text-gray-500 mt-1.5">
+                      🎲 Backend will pick from country-specific resolution pool (proxy region based)
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* ── STEP 2: Profile Mode ── */}
               <div>
                 <p className="text-white font-semibold text-sm mb-3">{stepNum++}️⃣ Profile Mode</p>
@@ -417,6 +481,7 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
               {selectedOS && (
                 <div className="rounded-xl bg-gray-800/60 border border-gray-700 px-4 py-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
                   <span>🖥️ <span className="text-white font-medium">{selectedOS}</span>{selectedOS === 'Android' && androidDevice !== 'auto' ? ` · ${androidDevice.split(' ').slice(-2).join(' ')}` : ''}</span>
+                  <span>📐 <span className="text-white font-medium font-mono">{resolution === 'auto' ? 'Auto' : resolution}</span></span>
                   <span>{profileMode === 'cloud' ? '☁️' : '⚡'} <span className="text-white font-medium">{profileMode === 'cloud' ? 'Cloud' : 'Quick/Local'}</span></span>
                   <span>🌐 <span className="text-white font-medium">{proxyType === 'smartproxy' ? 'SmartProxy (US)' : 'Multilogin Proxy (US/UK)'}</span></span>
                   <span>✕ <span className="text-white font-medium">{count}</span></span>

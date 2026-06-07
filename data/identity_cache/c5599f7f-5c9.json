@@ -1,0 +1,18 @@
+{
+  "profile_id": "c5599f7f-5c91-42bb-8881-e658585ddeec",
+  "country_code": "US",
+  "country": "United States",
+  "city": "New Hope",
+  "timezone": "America/New_York",
+  "lat": 40.3643,
+  "lon": -74.9513,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 3533838413,
+  "canvas_noise": 0.003071,
+  "webgl_noise": 0.00164,
+  "audio_noise": 1.382e-05,
+  "cached_at": 1780598802.784171
+}

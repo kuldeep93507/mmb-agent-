@@ -36,11 +36,13 @@ export interface EngagementProfileEntry {
 }
 
 export interface StartEngagementPayload {
-  profiles:       EngagementProfileEntry[];
-  watchPct:       number;
-  adSkipEnabled?: boolean;
-  videoQuality?:  string;
-  maxConcurrent?: number;
+  profiles:          EngagementProfileEntry[];
+  watchPct:          number;
+  adSkipEnabled?:    boolean;
+  adSkipDelaySec?:   number;
+  adSkipDelayMaxSec?: number;
+  videoQuality?:     string;
+  maxConcurrent?:    number;
 }
 
 export interface EngagementJobStatus {

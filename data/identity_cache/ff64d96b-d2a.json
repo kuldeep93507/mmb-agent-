@@ -1,0 +1,18 @@
+{
+  "profile_id": "ff64d96b-d2aa-4b94-969c-5e379597e4d4",
+  "country_code": "US",
+  "country": "United States",
+  "city": "New York",
+  "timezone": "America/New_York",
+  "lat": 40.7128,
+  "lon": -74.006,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 4071881655,
+  "canvas_noise": 0.007039,
+  "webgl_noise": 0.002686,
+  "audio_noise": 1.6e-05,
+  "cached_at": 1780573862.8870468
+}

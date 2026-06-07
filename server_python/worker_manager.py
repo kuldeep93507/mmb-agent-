@@ -54,8 +54,8 @@ def _build_engagement_from_config(config: dict, profile_name: str) -> dict:
         "descriptionExpand": bool(actions_dict.get("descriptionExpand", config.get("descriptionExpand", True))),
         "videoQuality":      str(config.get("videoQuality", "auto")),
         "adSkipEnabled":     bool(config.get("adSkipEnabled", True)),
-        "adSkipDelaySec":    int(config.get("adSkipAfterSec", config.get("adSkipDelaySec", 5))),
-        "adSkipDelayMaxSec": int(config.get("adSkipDelayMaxSec", 15)),
+        "adSkipDelaySec":    int(config.get("adSkipDelaySec", config.get("adSkipAfterSec", 10))),
+        "adSkipDelayMaxSec": int(config.get("adSkipDelayMaxSec", config.get("adSkipAfterSec", 14))),
         "volumePct":         int(actions_dict.get("volumePct", config.get("volumePct", 75))),
         "seekEnabled":       bool(config.get("seekEnabled", True)),
         "seekDirection":     str(config.get("seekDirection", "forward")),
@@ -76,12 +76,23 @@ def _build_engagement_from_config(config: dict, profile_name: str) -> dict:
 
 # ── Worker state ──────────────────────────────────────────────────────────────
 
+def _level_from_message(message: str) -> str:
+    if re.search(r"error|fail|✗|crashed", message, re.I):
+        return "error"
+    if re.search(r"✓|success|✅|done|complete", message, re.I):
+        return "success"
+    if re.search(r"warn|⚠|cancel", message, re.I):
+        return "warn"
+    return "info"
+
+
 class WorkerState:
     """Ek profile ke worker ka live state."""
 
-    def __init__(self, profile_id: str, profile_name: str):
+    def __init__(self, profile_id: str, profile_name: str, activity_log_fn=None):
         self.profile_id   = profile_id
         self.profile_name = profile_name
+        self._activity_log_fn = activity_log_fn
         self.status       = "waiting"   # waiting/starting/connecting/watching/done/error/stopped/crashed
         self.current_video: str = ""
         self.progress: str = "0/0"
@@ -97,11 +108,22 @@ class WorkerState:
         if len(self.logs) > 100:
             self.logs = self.logs[-100:]
         log.info("[%s] %s", self.profile_id[-6:], msg)
+        if self._activity_log_fn:
+            try:
+                self._activity_log_fn(
+                    _level_from_message(msg),
+                    "worker",
+                    msg,
+                    profile_id=self.profile_id,
+                    profile_name=self.profile_name,
+                )
+            except Exception:
+                pass
 
     def to_dict(self) -> dict:
         import re
         structured_logs = []
-        for entry in self.logs[-20:]:
+        for entry in self.logs[-50:]:
             if isinstance(entry, dict):
                 structured_logs.append(entry)
                 continue
@@ -148,6 +170,10 @@ class WorkerManager:
 
     def __init__(self):
         self.workers: Dict[str, WorkerState] = {}
+        self._activity_log_fn = None
+
+    def configure(self, activity_log_fn=None):
+        self._activity_log_fn = activity_log_fn
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -164,7 +190,7 @@ class WorkerManager:
         if profile_id in self.workers:
             await self.stop_worker(profile_id)
 
-        state = WorkerState(profile_id, profile_name)
+        state = WorkerState(profile_id, profile_name, activity_log_fn=self._activity_log_fn)
         self.workers[profile_id] = state
 
         task = asyncio.create_task(

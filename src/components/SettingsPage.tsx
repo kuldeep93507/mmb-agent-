@@ -676,9 +676,8 @@ export default function SettingsPage() {
 
         {/* Notifications */}
         <Section title="Notifications" icon={<Bell size={15} className="text-cyan-400" />} note="Browser popups (local) + Telegram instant alerts + email daily reports">
-          <div className="mb-3 flex items-center gap-2 text-xs text-amber-300/90">
-            <span className="px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40">Coming Soon</span>
-            <span className="text-gray-500">Email daily reports &amp; scheduled digest — Telegram + browser alerts work now</span>
+          <div className="mb-3 flex items-center gap-2 text-xs text-blue-300">
+            <span>Email alerts &amp; digest setup — Telegram + browser alerts work now</span>
           </div>
           <div className="mb-5 p-4 bg-gray-800/60 border border-gray-700 rounded-xl space-y-3">
             <p className="text-sm text-gray-300 font-medium">Browser notifications (free — no setup)</p>

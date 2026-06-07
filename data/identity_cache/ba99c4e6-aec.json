@@ -1,0 +1,18 @@
+{
+  "profile_id": "ba99c4e6-aecd-4a39-988d-5e9e47e33f62",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Oregon City",
+  "timezone": "America/Los_Angeles",
+  "lat": 45.3573,
+  "lon": -122.6068,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 4153804322,
+  "canvas_noise": 0.006632,
+  "webgl_noise": 0.004769,
+  "audio_noise": 6.158e-05,
+  "cached_at": 1780672209.893692
+}

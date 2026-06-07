@@ -1,0 +1,18 @@
+{
+  "profile_id": "94ea0584-d574-42f5-ae39-c517cdf5cf85",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Phoenix",
+  "timezone": "America/Phoenix",
+  "lat": 33.4413,
+  "lon": -112.0421,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1366,
+  "screen_height": 768,
+  "noise_seed": 315122609,
+  "canvas_noise": 0.007318,
+  "webgl_noise": 0.003734,
+  "audio_noise": 5.842e-05,
+  "cached_at": 1780672216.5831993
+}

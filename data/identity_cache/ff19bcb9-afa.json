@@ -1,0 +1,18 @@
+{
+  "profile_id": "ff19bcb9-afa3-41c4-8199-ef72ab5d28db",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Houston",
+  "timezone": "America/Chicago",
+  "lat": 29.7912,
+  "lon": -95.4182,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 2560,
+  "screen_height": 1440,
+  "noise_seed": 1976154877,
+  "canvas_noise": 0.001347,
+  "webgl_noise": 0.001278,
+  "audio_noise": 3.668e-05,
+  "cached_at": 1780672099.223185
+}

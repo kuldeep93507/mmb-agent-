@@ -1,0 +1,18 @@
+{
+  "profile_id": "d8e7ae69-4934-485f-8c20-ddcedc4ee0af",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Las Vegas",
+  "timezone": "America/Los_Angeles",
+  "lat": 36.1699,
+  "lon": -115.1398,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1536,
+  "screen_height": 864,
+  "noise_seed": 2292696783,
+  "canvas_noise": 0.005226,
+  "webgl_noise": 0.004713,
+  "audio_noise": 3.635e-05,
+  "cached_at": 1780629807.0027814
+}

@@ -1,0 +1,18 @@
+{
+  "profile_id": "6ecf9634-8683-4b6e-acae-3c1cad24b02c",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Marion",
+  "timezone": "America/Chicago",
+  "lat": 37.7241,
+  "lon": -88.9301,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 814787192,
+  "canvas_noise": 0.004248,
+  "webgl_noise": 0.002833,
+  "audio_noise": 8.121e-05,
+  "cached_at": 1780629767.003348
+}

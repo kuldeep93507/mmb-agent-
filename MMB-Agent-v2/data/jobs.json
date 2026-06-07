@@ -1,0 +1,270 @@
+{
+  "cycle_hours": 24,
+  "country_code": "US",
+  "provider": "multilogin",
+  "mobile_first": false,
+  "timezone": "America/New_York",
+  "daily_profile_view_limit": 5,
+  "max_concurrent_profiles": 6,
+  "min_concurrent_profiles": 1,
+  "ram_per_profile_mb": 1200,
+  "min_inter_arrival_seconds": 60,
+  "max_inter_arrival_seconds": 300,
+  "auto_create_profiles": false,
+  "target_profile_pool_size": 10,
+  "profiles": [
+    {
+      "profile_id": "12186f7b-cf86-4146-a431-cb5aaef08958",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "windows"
+    },
+    {
+      "profile_id": "2d5ef7f8-39bb-465d-9feb-317845ca04bd",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "windows"
+    },
+    {
+      "profile_id": "46db36a5-cb06-4fd5-8dc0-7d1b8e13073c",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "windows"
+    },
+    {
+      "profile_id": "75985f4c-44af-456e-9414-197c3b8604bf",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "windows"
+    },
+    {
+      "profile_id": "cd597ab9-03db-4bd7-9ac4-a7abc55f74c6",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "windows"
+    },
+    {
+      "profile_id": "1ad77258-a617-4f8c-9de0-a036e9c84073",
+      "country_code": "US",
+      "provider": "multilogin",
+      "platform": "macos"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "ultraplay8-video-01",
+      "video_id": "KjNyAVwtAUg",
+      "channel_name": "ULTRAPLAY8",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "channel_url": "https://www.youtube.com/@ULTRAPLAY8",
+      "title_hint": "Best Credit Card 2026-My 1000$ monthly earn strategy",
+      "search_keywords": "Best Credit Card 2026 1000 monthly earn strategy",
+      "search_keyword_variants": [
+        "Best Credit Card 2026 1000 monthly earn strategy",
+        "best credit card 2026 monthly income",
+        "best credit cards 2026",
+        "credit card 1000 monthly strategy 2026",
+        "best cash back cards 2026"
+      ],
+      "target_views": 13,
+      "referrer_search": false,
+      "behavior_profile": "serious_learner",
+      "watch_time": {
+        "mode": "smart",
+        "smart_min_pct": 0.4,
+        "smart_max_pct": 0.6,
+        "min_seconds": 90,
+        "max_seconds": 300
+      },
+      "engagement": {
+        "like": {
+          "enabled": true,
+          "probability": 0.85
+        },
+        "dislike": {
+          "enabled": false
+        },
+        "subscribe": {
+          "enabled": true,
+          "probability": 0.3
+        },
+        "bell": {
+          "enabled": true,
+          "probability": 0.5
+        },
+        "comment": {
+          "enabled": true,
+          "probability": 0.4,
+          "comment_templates": [
+            "This is a very helpful strategy for 2026, thanks for sharing!",
+            "Finally a clear breakdown of credit card rewards. Subscribed!",
+            "Great video! I had no idea about the monthly income strategy.",
+            "Very informative content. Keep it up!",
+            "This is exactly what I was looking for, thank you!",
+            "Just started implementing this and already seeing results. Amazing!",
+            "I've watched this three times already, so much value packed in here.",
+            "The part about monthly income really opened my eyes. Great explanation.",
+            "Been looking for this kind of breakdown for months. Thank you so much!",
+            "Honestly one of the best financial videos I've seen this year."
+          ]
+        },
+        "autoplay_off": {
+          "enabled": true,
+          "must_do": true
+        },
+        "ads_skip": {
+          "enabled": true,
+          "must_do": true,
+          "skip_after_seconds": 5
+        },
+        "quality": {
+          "enabled": true,
+          "target": "360p"
+        },
+        "description": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": "ultraplay8-video-02",
+      "video_id": "C64hwS63yIc",
+      "channel_name": "ULTRAPLAY8",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "channel_url": "https://www.youtube.com/@ULTRAPLAY8",
+      "title_hint": "How to build a multi million dollars Bank in usa",
+      "search_keywords": "how to build multi million dollar bank usa",
+      "search_keyword_variants": [
+        "how to build multi million dollar bank usa",
+        "multi million dollar bank strategy usa",
+        "how to build bank in usa 2026",
+        "million dollar bank strategy",
+        "build bank usa finance"
+      ],
+      "target_views": 6,
+      "referrer_search": false,
+      "behavior_profile": "serious_learner",
+      "watch_time": {
+        "mode": "smart",
+        "smart_min_pct": 0.4,
+        "smart_max_pct": 0.6,
+        "min_seconds": 90,
+        "max_seconds": 300
+      },
+      "engagement": {
+        "like": {
+          "enabled": true,
+          "probability": 0.85
+        },
+        "dislike": {
+          "enabled": false
+        },
+        "subscribe": {
+          "enabled": true,
+          "probability": 0.3
+        },
+        "bell": {
+          "enabled": true,
+          "probability": 0.5
+        },
+        "comment": {
+          "enabled": true,
+          "probability": 0.4,
+          "comment_templates": [
+            "This is exactly the kind of content I needed, very helpful!",
+            "Amazing breakdown of the banking strategy. Thanks for sharing!",
+            "I never thought about it this way. Really eye-opening video.",
+            "Great explanation, very clear and informative. Keep it up!",
+            "Subscribed! This channel has amazing financial content."
+          ]
+        },
+        "autoplay_off": {
+          "enabled": true,
+          "must_do": true
+        },
+        "ads_skip": {
+          "enabled": true,
+          "must_do": true,
+          "skip_after_seconds": 5
+        },
+        "quality": {
+          "enabled": true,
+          "target": "360p"
+        },
+        "description": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "id": "ultraplay8-video-03",
+      "video_id": "bOx62E3tOx0",
+      "channel_name": "ULTRAPLAY8",
+      "channel_id": "UCNxO4SBckt-vI9VPazA_4Iw",
+      "channel_url": "https://www.youtube.com/@ULTRAPLAY8",
+      "title_hint": "How to maximize profits in idle bank Tycoon USA Banking Strategy 2026",
+      "search_keywords": "maximize profits idle bank tycoon usa 2026",
+      "search_keyword_variants": [
+        "maximize profits idle bank tycoon usa 2026",
+        "idle bank tycoon strategy 2026",
+        "usa banking strategy 2026 profits",
+        "bank tycoon tips usa",
+        "idle bank tycoon maximize profits"
+      ],
+      "target_views": 6,
+      "referrer_search": false,
+      "behavior_profile": "serious_learner",
+      "watch_time": {
+        "mode": "smart",
+        "smart_min_pct": 0.4,
+        "smart_max_pct": 0.6,
+        "min_seconds": 90,
+        "max_seconds": 300
+      },
+      "engagement": {
+        "like": {
+          "enabled": true,
+          "probability": 0.85
+        },
+        "dislike": {
+          "enabled": false
+        },
+        "subscribe": {
+          "enabled": true,
+          "probability": 0.3
+        },
+        "bell": {
+          "enabled": true,
+          "probability": 0.5
+        },
+        "comment": {
+          "enabled": true,
+          "probability": 0.4,
+          "comment_templates": [
+            "This strategy is pure gold, thank you for explaining so clearly!",
+            "I applied this and doubled my profits. Amazing content!",
+            "Best banking strategy video I've seen. Subscribed!",
+            "Very detailed and helpful. Keep making these videos!",
+            "This is exactly what I was looking for. Great channel!"
+          ]
+        },
+        "autoplay_off": {
+          "enabled": true,
+          "must_do": true
+        },
+        "ads_skip": {
+          "enabled": true,
+          "must_do": true,
+          "skip_after_seconds": 5
+        },
+        "quality": {
+          "enabled": true,
+          "target": "360p"
+        },
+        "description": {
+          "enabled": false
+        }
+      }
+    }
+  ]
+}

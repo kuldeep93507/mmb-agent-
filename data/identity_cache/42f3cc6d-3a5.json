@@ -1,0 +1,18 @@
+{
+  "profile_id": "42f3cc6d-3a51-41bb-8d11-43818d0ad863",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Buffalo",
+  "timezone": "America/New_York",
+  "lat": 42.8864,
+  "lon": -78.8783,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 4011048993,
+  "canvas_noise": 0.001224,
+  "webgl_noise": 0.004113,
+  "audio_noise": 8.678e-05,
+  "cached_at": 1780598788.0906994
+}

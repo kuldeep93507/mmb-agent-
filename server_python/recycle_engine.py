@@ -570,8 +570,8 @@ class RecycleEngine:
                 # Playback — per-profile overrides global
                 "videoQuality":      pcfg.get("videoQuality", settings.get("videoQuality", "auto")),
                 "adSkipEnabled":     bool(pcfg.get("adSkipEnabled", settings.get("adSkipEnabled", True))),
-                "adSkipDelaySec":    int(pcfg.get("adSkipAfterSec", settings.get("adSkipAfterSec", 5))),
-                "adSkipDelayMaxSec": int(pcfg.get("adSkipAfterSec", settings.get("adSkipAfterSec", 5))) + 10,
+                "adSkipDelaySec":    int(pcfg.get("adSkipAfterSec", settings.get("adSkipAfterSec", 10))),
+                "adSkipDelayMaxSec": int(pcfg.get("adSkipDelayMaxSec", settings.get("adSkipDelayMaxSec", 14))),
                 "volumePct":         int(pcfg.get("volumePct", settings.get("volumePct", 75))),
                 # Human behavior
                 "seekEnabled":       bool(pcfg.get("seekEnabled", settings.get("seekEnabled", True))),
