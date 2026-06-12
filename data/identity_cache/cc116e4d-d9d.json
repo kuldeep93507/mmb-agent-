@@ -1,0 +1,18 @@
+{
+  "profile_id": "cc116e4d-d9d0-4c09-96d3-d299366e07dc",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Otis",
+  "timezone": "America/Los_Angeles",
+  "lat": 45.0217,
+  "lon": -123.9539,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 405556126,
+  "canvas_noise": 0.005978,
+  "webgl_noise": 0.00475,
+  "audio_noise": 6.772e-05,
+  "cached_at": 1780968231.62081
+}

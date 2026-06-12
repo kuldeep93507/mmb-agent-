@@ -1,0 +1,18 @@
+{
+  "profile_id": "4bc06274-7e4a-4596-a70a-44f67a5df6cf",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Bullhead City",
+  "timezone": "America/Phoenix",
+  "lat": 35.1063,
+  "lon": -114.5925,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 2671138024,
+  "canvas_noise": 0.004914,
+  "webgl_noise": 0.004945,
+  "audio_noise": 4.888e-05,
+  "cached_at": 1781053973.057049
+}

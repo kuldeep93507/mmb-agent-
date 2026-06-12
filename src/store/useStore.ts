@@ -46,11 +46,12 @@ const ACTIVE_TAB_KEY = 'mmb_active_tab';
 export const VALID_APP_TABS = new Set([
   'dashboard', 'monitor', 'profiles', 'channels', 'video-shuffle', 'backlinks', 'scheduler',
   'manual', 'analytics', 'comments', 'jobs', 'logs', 'settings', 'engagement', 'gmail-setup',
-  'proxy',
+  'proxy', 'selector-health', 'future-agent', 'fleet', 'notification-hub',
 ]);
 
 const REMOVED_TAB_REDIRECT: Record<string, string> = {
   'proxy-health': 'dashboard',
+  recycle: 'dashboard',
   performance: 'channels',
   'orchestrator-log': 'channels',
   'video-manager': 'channels',
@@ -259,7 +260,7 @@ export function useStore() {
 
   // ============ CREATE PROFILE — Full pipeline with fingerprint + proxy ============
   const createProfile = useCallback(
-    async (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string): Promise<{ code: number; message?: string }> => {
+    async (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string, profileName?: string): Promise<{ code: number; message?: string }> => {
       const current = browserProviderRef.current;
       let provider: BrowserProvider = current === 'all' ? 'multilogin' : current;
       if (current === 'all') {
@@ -283,18 +284,20 @@ export function useStore() {
 
       const modeLabel = resolvedProfileMode === 'quick' ? ' (Quick/Local)' : ' (Cloud/Persistent)';
       const deviceLabel = os === 'Android' && androidDevice ? ` [${androidDevice}]` : '';
+      const resLabel = resolution && resolution !== 'auto' ? ` [${resolution}]` : '';
 
       try {
-        // BUG FIX: Use serial profile naming (Profile_001, Profile_002, etc.)
-        const profileNumber = getNextProfileNumber();
-        const profileName = formatProfileName(profileNumber);
+        const customName = profileName?.trim().replace(/[^\w\s\-_.]/g, '').slice(0, 48);
+        const profileNameFinal = customName
+          ? customName
+          : formatProfileName(getNextProfileNumber());
 
-        addLog('info', `Creating ${os}${deviceLabel} profile via ${provider} ${proxyLabel}${modeLabel}...`);
+        addLog('info', `Creating "${profileNameFinal}" — ${os}${deviceLabel}${resLabel} via ${provider} ${proxyLabel}${modeLabel}...`);
 
         const body: Record<string, unknown> = {
           os,
           browserType: provider,
-          name: profileName,
+          name: profileNameFinal,
           proxyType: resolvedProxyType,       // 'smartproxy' | 'multilogin' | 'none'
           profileMode: resolvedProfileMode,   // 'cloud' | 'quick'
           fingerprintConfig: {
@@ -317,6 +320,15 @@ export function useStore() {
         // Pass user-selected resolution (override country pool auto-pick)
         if (resolution && resolution !== 'auto') {
           body.resolution = resolution;
+          const parts = resolution.toLowerCase().replace('×', 'x').split('x');
+          if (parts.length === 2) {
+            const w = parseInt(parts[0], 10);
+            const h = parseInt(parts[1], 10);
+            if (w > 0 && h > 0) {
+              body.screenWidth = w;
+              body.screenHeight = h;
+            }
+          }
         }
 
         const res = await backendFetch('/api/profiles/create-full', {

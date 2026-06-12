@@ -106,12 +106,15 @@ def _run_wmic_chrome_processes(timeout: int = 30) -> str:
     return ""
 
 
+def _settings_file_path() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(here, "..", "..", "user-settings.json"))
+
+
 def _load_settings_file() -> dict:
     """Read user-settings.json from repo root (two levels up from this file)."""
     try:
-        here = os.path.dirname(os.path.abspath(__file__))
-        settings_path = os.path.join(here, "..", "..", "user-settings.json")
-        settings_path = os.path.normpath(settings_path)
+        settings_path = _settings_file_path()
         if os.path.exists(settings_path):
             with open(settings_path, "r", encoding="utf-8") as f:
                 return json.load(f)
@@ -147,34 +150,119 @@ class MultiloginProvider:
 
     # ── Auth ─────────────────────────────────────────────────────────────────
 
+    def _reload_credentials(self) -> None:
+        """Re-read user-settings.json + env (UI save may update disk mid-run)."""
+        self.token = self.token or os.getenv("MULTILOGIN_TOKEN", "")
+        self.email = self.email or os.getenv("MULTILOGIN_EMAIL", "")
+        self.password = self.password or os.getenv("MULTILOGIN_PASSWORD", "")
+        self.folder_id = self.folder_id or os.getenv("MULTILOGIN_FOLDER_ID", "")
+        s = _load_settings_file()
+        if s.get("multiloginToken"):
+            self.token = str(s["multiloginToken"]).strip()
+        if s.get("multiloginEmail"):
+            self.email = str(s["multiloginEmail"]).strip()
+        if s.get("multiloginPassword"):
+            self.password = str(s["multiloginPassword"]).strip()
+        if s.get("multiloginFolderId"):
+            self.folder_id = str(s["multiloginFolderId"]).strip()
+
+    def _persist_token(self, token: str) -> None:
+        """Save automation token to memory, env, and user-settings.json."""
+        token = (token or "").strip()
+        if not token:
+            return
+        self.token = token
+        self._session_token = token
+        os.environ["MULTILOGIN_TOKEN"] = token
+        try:
+            path = _settings_file_path()
+            data = _load_settings_file()
+            data["multiloginToken"] = token
+            if self.email:
+                data.setdefault("multiloginEmail", self.email)
+            if self.folder_id:
+                data.setdefault("multiloginFolderId", self.folder_id)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            log.info("[MLX] automation token saved to user-settings.json")
+        except Exception as exc:
+            log.warning("[MLX] could not persist token to settings file: %s", exc)
+
     async def _get_token(self) -> str:
-        """Return valid token. Fresh signin on first call, then cached."""
+        """Return 30-day automation token (preferred) or bootstrap from email/password."""
         if self._session_token:
             return self._session_token
-        # Try fresh signin — if credentials exist
-        if self.email and self.password:
-            try:
-                return await self._signin()
-            except Exception as e:
-                log.warning(f"[MLX] signin failed ({e}) — using cached token from settings")
+        self._reload_credentials()
         if self.token:
+            self._session_token = self.token
             return self.token
-        raise RuntimeError("No Multilogin token available. Login to Multilogin X app first.")
+        if self.email and self.password:
+            return await self._fetch_automation_token()
+        raise RuntimeError(
+            "Multilogin token missing. Fix: Settings → Multilogin → email + password save karo, "
+            "phir 'Fetch Token' dabao. Multilogin X desktop app bhi login + running honi chahiye."
+        )
 
     async def _signin(self) -> str:
         import hashlib as _h
+        if not self.email or not self.password:
+            raise RuntimeError("Multilogin email/password missing in Settings")
         pw_md5 = _h.md5(self.password.encode()).hexdigest()
         payload = {"email": self.email, "password": pw_md5}
+        delays = (0, 3, 6)
+        last_err = "signin failed"
         async with aiohttp.ClientSession() as s:
-            async with s.post(f"{CLOUD_API}/user/signin", json=payload,
-                               timeout=aiohttp.ClientTimeout(total=15)) as r:
-                data = await r.json()
-                t = data.get("data", {}).get("token", "")
-                if not t:
-                    raise RuntimeError(f"Signin failed: {data.get('message', data)}")
-                self._session_token = t
-                log.info("[MLX] signin OK — fresh token obtained")
-                return t
+            for attempt, delay in enumerate(delays, start=1):
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    async with s.post(
+                        f"{CLOUD_API}/user/signin",
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                    ) as r:
+                        data = await r.json(content_type=None)
+                        if r.status == 501 and attempt < len(delays):
+                            log.warning("[MLX] signin HTTP 501 — retry %s/%s", attempt, len(delays))
+                            continue
+                        t = (data.get("data") or {}).get("token", "")
+                        if not t:
+                            last_err = str(data.get("message") or data)
+                            continue
+                        self._session_token = t
+                        log.info("[MLX] signin OK — session token obtained")
+                        return t
+                except Exception as exc:
+                    last_err = str(exc)
+        raise RuntimeError(f"Multilogin signin failed: {last_err}")
+
+    async def _fetch_automation_token(self, *, force_signin: bool = False) -> str:
+        """Sign in + fetch 720h automation token (what launcher + cloud API expect)."""
+        self._reload_credentials()
+        if not force_signin and self.token:
+            self._session_token = self.token
+            return self.token
+        if not self.email or not self.password:
+            raise RuntimeError(
+                "Multilogin email/password missing — Settings page se save karo, phir Fetch Token."
+            )
+        await self._signin()
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{CLOUD_API}/workspace/automation_token?expiration_period=720h",
+                headers=self._auth_header(),
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as r:
+                data = await r.json(content_type=None)
+                token = (data.get("data") or {}).get("token", "")
+                if not token:
+                    raise RuntimeError(
+                        f"Automation token fetch failed: "
+                        f"{(data.get('status') or {}).get('message') or data}"
+                    )
+        self._persist_token(token)
+        log.info("[MLX] automation token fetched (720h)")
+        return token
 
     async def _call_launcher(self, path: str, *, method: str = "GET", retry_on_401: bool = True) -> tuple[int, str]:
         """Call local MLX launcher. Auto-refreshes token on 401."""
@@ -200,19 +288,19 @@ class MultiloginProvider:
             status, txt = await _do(LAUNCHER_HTTPS, ssl_ctx=_SSL_CTX)
 
         if status == 401 and retry_on_401:
-            # Token expired — force fresh signin and retry once
-            log.warning("[MLX] 401 from launcher — forcing fresh signin")
-            self._session_token = ""  # clear cached
+            log.warning("[MLX] 401 from launcher — refreshing automation token")
+            self._session_token = ""
+            self.token = ""
             try:
-                new_token = await self._signin()
+                new_token = await self._fetch_automation_token(force_signin=True)
                 headers = {"Authorization": f"Bearer {new_token}"}
                 try:
                     status, txt = await _do(LAUNCHER_HTTP)
                 except aiohttp.ClientConnectorError:
                     status, txt = await _do(LAUNCHER_HTTPS, ssl_ctx=_SSL_CTX)
-                log.info(f"[MLX] retry after fresh signin: status={status}")
+                log.info("[MLX] retry after automation token refresh: status=%s", status)
             except Exception as se:
-                log.error(f"[MLX] re-signin failed: {se}")
+                log.error("[MLX] automation token refresh failed: %s", se)
 
         log.info(f"[MLX] launcher {path[:60]} → {status}: {txt[:120]}")
         return status, txt
@@ -226,10 +314,16 @@ class MultiloginProvider:
             h["X-Strict-Mode"] = "true"
         return h
 
-    async def update_profile_parameters(self, profile_id: str, parameters: dict) -> dict:
+    async def update_profile_parameters(
+        self, profile_id: str, parameters: dict, *, is_local: bool = False,
+    ) -> dict:
         """POST /profile/update — force antidetect flags after create."""
         await self._get_token()
-        payload = {"profile_id": profile_id, "parameters": parameters}
+        payload = {
+            "profile_id": profile_id,
+            "is_local": bool(is_local),
+            "parameters": parameters,
+        }
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{CLOUD_API}/profile/update",
@@ -246,7 +340,6 @@ class MultiloginProvider:
     # ── List profiles ─────────────────────────────────────────────────────────
 
     async def list_profiles(self, page: int = 1, page_size: int = 50) -> list:
-        await self._get_token()
         body = {
             "folder_id": self.folder_id,
             "search_text": "",
@@ -254,21 +347,38 @@ class MultiloginProvider:
             "limit": page_size,
             "is_removed": False,
         }
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{CLOUD_API}/profile/search", json=body,
-                               headers=self._headers(),
-                               timeout=aiohttp.ClientTimeout(total=15)) as r:
-                ct = r.content_type or ""
-                if "html" in ct:
-                    raise RuntimeError(
-                        f"Multilogin token expired or invalid — API returned HTML "
-                        f"(HTTP {r.status}). Go to Settings → refresh your Multilogin token."
-                    )
-                data = await r.json(content_type=None)
-                if data.get("status", {}).get("http_code") == 200 or r.status == 200:
-                    profiles = data.get("data", {}).get("profiles", [])
-                    return [self._normalize(p) for p in profiles]
-                raise RuntimeError(f"list_profiles failed: {data.get('status', data)}")
+
+        async def _search_with_token() -> list:
+            await self._get_token()
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    f"{CLOUD_API}/profile/search",
+                    json=body,
+                    headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as r:
+                    ct = r.content_type or ""
+                    if "html" in ct or r.status in (401, 403):
+                        raise RuntimeError("token_invalid")
+                    data = await r.json(content_type=None)
+                    http_code = (data.get("status") or {}).get("http_code", r.status)
+                    if http_code in (200, 201) or r.status == 200:
+                        profiles = data.get("data", {}).get("profiles", [])
+                        return [self._normalize(p) for p in profiles]
+                    if http_code in (401, 403):
+                        raise RuntimeError("token_invalid")
+                    raise RuntimeError(f"list_profiles failed: {data.get('status', data)}")
+
+        try:
+            return await _search_with_token()
+        except RuntimeError as exc:
+            if "token_invalid" not in str(exc):
+                raise
+            log.warning("[MLX] profile search auth failed — refreshing automation token")
+            self._session_token = ""
+            self.token = ""
+            await self._fetch_automation_token(force_signin=True)
+            return await _search_with_token()
 
     def _normalize(self, p: dict) -> dict:
         raw_status = str(p.get("status", "")).lower()
@@ -651,6 +761,8 @@ class MultiloginProvider:
             return {"code": -1, "message": "MULTILOGIN_FOLDER_ID not set in .env / Settings", "data": None}
 
         os_type = str(options.get("platform", "windows")).lower()
+        profile_mode = str(options.get("profileMode") or "cloud").lower()
+        is_local = profile_mode in ("quick", "local")
         parameters = options.get("parameters")
         if not parameters:
             return {
@@ -699,7 +811,9 @@ class MultiloginProvider:
                 if not profile_id:
                     return {"code": -1, "message": "No profile id in Multilogin response", "data": None}
 
-                upd = await self.update_profile_parameters(profile_id, parameters)
+                upd = await self.update_profile_parameters(
+                    profile_id, parameters, is_local=is_local,
+                )
                 if upd.get("code") != 0:
                     log.warning("[MLX] profile/update antidetect failed: %s", upd.get("message"))
 
@@ -776,17 +890,9 @@ class MultiloginProvider:
     # ── Fetch token ───────────────────────────────────────────────────────────
 
     async def fetch_token(self, email: str = "", password: str = "") -> str:
-        self.email    = email or self.email
-        self.password = password or self.password
-        await self._signin()
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                f"{CLOUD_API}/workspace/automation_token?expiration_period=720h",
-                headers=self._auth_header(),
-                timeout=aiohttp.ClientTimeout(total=15)) as r:
-                data = await r.json()
-                token = data.get("data", {}).get("token", "")
-                if not token:
-                    raise RuntimeError(f"Token fetch failed: {data}")
-                self.token = token
-                return token
+        if email:
+            self.email = email.strip()
+        if password:
+            self.password = password
+        self._session_token = ""
+        return await self._fetch_automation_token(force_signin=True)

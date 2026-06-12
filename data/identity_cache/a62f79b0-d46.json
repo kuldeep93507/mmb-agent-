@@ -1,0 +1,18 @@
+{
+  "profile_id": "a62f79b0-d46e-41cd-aa79-4186b142ffbe",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Malvern",
+  "timezone": "America/New_York",
+  "lat": 40.0362,
+  "lon": -75.5138,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1970488646,
+  "canvas_noise": 0.005813,
+  "webgl_noise": 0.003319,
+  "audio_noise": 9.283e-05,
+  "cached_at": 1780968223.633057
+}

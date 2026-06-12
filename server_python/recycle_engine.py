@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from server_python.action_registry import sanitize_engagement
+
 log = logging.getLogger("mmb.recycle")
 
 
@@ -162,7 +164,7 @@ class RecycleEngine:
             "seekEnabled": settings.get("seekEnabled", True),
             "seekDirection": settings.get("seekDirection", "forward"),
             "descriptionExpand": settings.get("descriptionExpand", True),
-            "descriptionLinks": settings.get("descriptionLinks", False),
+            "descriptionLinks": False,  # coming soon — see action_registry.py
             "pauseProbability": float(settings.get("pauseProbability", 12)) / 100.0
             if float(settings.get("pauseProbability", 12)) > 1
             else float(settings.get("pauseProbability", 0.12)),
@@ -172,8 +174,10 @@ class RecycleEngine:
             # Traffic Source mix (% per source) — defaults: balanced
             "srcNotificationPct": int(settings.get("srcNotificationPct", 20)),
             "srcSearchPct":       int(settings.get("srcSearchPct", 30)),
-            "srcHomepagePct":     int(settings.get("srcHomepagePct", 30)),
-            # Direct = remainder; auto-calculated below
+            "srcHomepagePct":     int(settings.get("srcHomepagePct", 20)),
+            "srcGooglePct":       int(settings.get("srcGooglePct", 12)),
+            "srcBingPct":         int(settings.get("srcBingPct", 8)),
+            "srcChannelDiscPct":  int(settings.get("srcChannelDiscPct", 10)),
         }
 
     def _load_profile_config(self, profile_id: str) -> dict:
@@ -193,19 +197,39 @@ class RecycleEngine:
         # Per-profile mix (if user set on ProfileSettings)
         notif = int(profile_cfg.get("srcNotificationPct", global_settings.get("srcNotificationPct", 20)))
         search = int(profile_cfg.get("srcSearchPct", global_settings.get("srcSearchPct", 30)))
-        home = int(profile_cfg.get("srcHomepagePct", global_settings.get("srcHomepagePct", 30)))
+        home = int(profile_cfg.get("srcHomepagePct", global_settings.get("srcHomepagePct", 20)))
+        google = int(profile_cfg.get("srcGooglePct", global_settings.get("srcGooglePct", 12)))
+        bing = int(profile_cfg.get("srcBingPct", global_settings.get("srcBingPct", 8)))
+        chdisc = int(profile_cfg.get("srcChannelDiscPct", global_settings.get("srcChannelDiscPct", 10)))
         notif = max(0, min(100, notif))
         search = max(0, min(100, search))
         home = max(0, min(100, home))
-        direct = max(0, 100 - notif - search - home)
+        google = max(0, min(100, google))
+        bing = max(0, min(100, bing))
+        chdisc = max(0, min(100, chdisc))
+        total = notif + search + home + google + bing + chdisc
+        if total > 100:
+            scale = 100.0 / total
+            notif = int(notif * scale)
+            search = int(search * scale)
+            home = int(home * scale)
+            google = int(google * scale)
+            bing = int(bing * scale)
+            chdisc = int(chdisc * scale)
 
         roll = random.randint(1, 100)
-        if roll <= notif:
-            return "notification"
-        if roll <= notif + search:
-            return "search"
-        if roll <= notif + search + home:
-            return "homepage"
+        cursor = 0
+        for name, pct in (
+            ("notification", notif),
+            ("search", search),
+            ("homepage", home),
+            ("google", google),
+            ("bing", bing),
+            ("channel_discovery", chdisc),
+        ):
+            cursor += pct
+            if roll <= cursor:
+                return name
         return "direct"
 
     def _get_assignment_videos(self, profile_id: str) -> list[dict]:
@@ -557,7 +581,7 @@ class RecycleEngine:
             # ── Traffic source — sample per cycle (per-profile mix → global fallback) ──
             traffic_src = self._pick_traffic_source(settings, pcfg)
 
-            engagement = {
+            engagement = sanitize_engagement({
                 # Engagement actions — from per-profile config (no more hardcoded False!)
                 "like":              bool(pcfg.get("likeEnabled", False)),
                 "dislike":           bool(pcfg.get("dislikeEnabled", False)),
@@ -570,8 +594,25 @@ class RecycleEngine:
                 # Playback — per-profile overrides global
                 "videoQuality":      pcfg.get("videoQuality", settings.get("videoQuality", "auto")),
                 "adSkipEnabled":     bool(pcfg.get("adSkipEnabled", settings.get("adSkipEnabled", True))),
-                "adSkipDelaySec":    int(pcfg.get("adSkipAfterSec", settings.get("adSkipAfterSec", 10))),
-                "adSkipDelayMaxSec": int(pcfg.get("adSkipDelayMaxSec", settings.get("adSkipDelayMaxSec", 14))),
+                "adSkipDelaySec":    int(pcfg.get("adSkipDelaySec", pcfg.get("adSkipAfterSec", settings.get("adSkipAfterSec", 10)))),
+                "adSkipDelayMaxSec": int(
+                    pcfg.get("adSkipMaxSec")
+                    or pcfg.get("adSkipDelayMaxSec")
+                    or settings.get("adSkipMaxSec")
+                    or settings.get("adSkipDelayMaxSec")
+                    or 60
+                ),
+                "adSkipMaxSec":      int(
+                    pcfg.get("adSkipMaxSec")
+                    or pcfg.get("adSkipDelayMaxSec")
+                    or settings.get("adSkipMaxSec")
+                    or settings.get("adSkipDelayMaxSec")
+                    or 60
+                ),
+                "adClickEnabled":    bool(pcfg.get("adClickEnabled", settings.get("adClickEnabled", False))),
+                "adClickDelayMinSec": int(pcfg.get("adClickDelayMinSec", settings.get("adClickDelayMinSec", 10))),
+                "adClickDelayMaxSec": int(pcfg.get("adClickDelayMaxSec", settings.get("adClickDelayMaxSec", 15))),
+                "adClickVisitSec":   int(pcfg.get("adClickVisitSec", settings.get("adClickVisitSec", 20))),
                 "volumePct":         int(pcfg.get("volumePct", settings.get("volumePct", 75))),
                 # Human behavior
                 "seekEnabled":       bool(pcfg.get("seekEnabled", settings.get("seekEnabled", True))),
@@ -581,7 +622,7 @@ class RecycleEngine:
                 "naturalScrollCurves":     settings.get("naturalScrollCurves", True),
                 # Traffic source for this cycle
                 "trafficSource":     traffic_src,
-            }
+            })
 
             _slot_log(
                 f"Cycle config | source={traffic_src} like={engagement['like']} sub={engagement['subscribe']} "

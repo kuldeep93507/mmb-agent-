@@ -63,7 +63,57 @@ async def cdp_move_bezier(
         return False
 
 
-async def cdp_click(tab: Any, x: float, y: float) -> bool:
+async def cdp_scroll(
+    tab: Any,
+    delta_y: float,
+    rng: random.Random,
+    *,
+    x: float = 640.0,
+    y: float = 360.0,
+) -> bool:
+    """
+    REAL human-like scroll via CDP mouseWheel events (isTrusted=true) — fires
+    genuine `wheel` events, unlike window.scrollBy() which silently moves the
+    page with NO wheel event (a bot signal). Sends the total delta in several
+    randomized wheel "ticks" so it looks like a real mouse wheel / trackpad.
+    Returns False on failure so callers can JS-fallback.
+    """
+    try:
+        from nodriver import cdp
+    except Exception:
+        return False
+    try:
+        total = abs(float(delta_y))
+        direction = 1.0 if delta_y >= 0 else -1.0
+        if total < 1:
+            return True
+        # Variable curve: many small ticks at start, larger in middle, taper at end
+        n_ticks = max(4, min(18, int(total / 28) + rng.randint(2, 5)))
+        weights: list[float] = []
+        for i in range(n_ticks):
+            t = (i + 1) / n_ticks
+            # Per-session curve shape (ease in-out with jitter)
+            ease = t * t * (3.0 - 2.0 * t)
+            prev = (i / n_ticks) ** 2 * (3.0 - 2.0 * (i / n_ticks)) if i else 0.0
+            weights.append(max(0.04, ease - prev + rng.uniform(-0.02, 0.04)))
+        wsum = sum(weights) or 1.0
+        weights = [w / wsum for w in weights]
+        for w in weights:
+            tick = max(8.0, min(total, total * w * rng.uniform(0.85, 1.15)))
+            total -= tick
+            await tab.send(cdp.input_.dispatch_mouse_event(
+                type_="mouseWheel",
+                x=x + rng.uniform(-4, 4), y=y + rng.uniform(-4, 4),
+                delta_x=rng.uniform(-1.5, 1.5) if rng.random() < 0.12 else 0.0,
+                delta_y=direction * tick,
+            ))
+            await asyncio.sleep(rng.uniform(0.04, 0.11))
+        return True
+    except Exception:
+        return False
+
+
+async def cdp_click(tab: Any, x: float, y: float, *, modifiers: int = 0) -> bool:
     try:
         from nodriver import cdp
         await cdp_move_to(tab, x, y)
@@ -71,15 +121,27 @@ async def cdp_click(tab: Any, x: float, y: float) -> bool:
         await tab.send(cdp.input_.dispatch_mouse_event(
             type_="mousePressed", x=x, y=y,
             button=cdp.input_.MouseButton.LEFT, click_count=1,
+            modifiers=modifiers,
         ))
         await asyncio.sleep(0.04)
         await tab.send(cdp.input_.dispatch_mouse_event(
             type_="mouseReleased", x=x, y=y,
             button=cdp.input_.MouseButton.LEFT, click_count=1,
+            modifiers=modifiers,
         ))
         return True
     except Exception:
         return False
+
+
+async def cdp_ctrl_click(tab: Any, x: float, y: float, rng: random.Random) -> bool:
+    """Ctrl+click — opens link in new tab (browser default)."""
+    fx = x + rng.uniform(-80, 80)
+    fy = y + rng.uniform(-60, 60)
+    if not await cdp_move_bezier(tab, fx, fy, x, y, rng):
+        return await cdp_click(tab, x, y, modifiers=2)
+    await asyncio.sleep(rng.uniform(0.25, 0.6))
+    return await cdp_click(tab, x, y, modifiers=2)
 
 
 async def cdp_hover_then_click(

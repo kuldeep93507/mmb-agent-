@@ -3,56 +3,71 @@
 /* ── MMB Design Tokens ────────────────────────────────── */
 :root,
 [data-theme="light"] {
-  --mmb-bg:           #eef1f8;
+  --mmb-bg:           #f4f6fc;
   --mmb-surface:      #ffffff;
-  --mmb-surface2:     #f8f9fc;
-  --mmb-border:       #e5e7eb;
-  --mmb-border2:      #d1d5db;
-  --mmb-text:         #111827;
-  --mmb-text2:        #374151;
-  --mmb-muted:        #6b7280;
-  --mmb-accent:       #4f46e5;
-  --mmb-accent2:      #6366f1;
-  --mmb-accent-bg:    #eef2ff;
-  --mmb-accent-text:  #4338ca;
-  --mmb-green:        #16a34a;
-  --mmb-green-bg:     #dcfce7;
-  --mmb-red:          #dc2626;
-  --mmb-red-bg:       #fee2e2;
-  --mmb-yellow:       #d97706;
-  --mmb-yellow-bg:    #fef3c7;
-  --mmb-blue:         #2563eb;
-  --mmb-blue-bg:      #dbeafe;
-  --mmb-shadow:       0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
-  --mmb-shadow-lg:    0 4px 16px rgba(0,0,0,.10);
+  --mmb-surface2:     #f5f7fd;
+  --mmb-border:       #e7e9f3;
+  --mmb-border2:      #d4d8ea;
+  --mmb-text:         #0d1020;
+  --mmb-text2:        #353a52;
+  --mmb-muted:        #717892;
+  --mmb-accent:       #6d5efc;
+  --mmb-accent2:      #9b6bff;
+  --mmb-accent-bg:    #efecff;
+  --mmb-accent-text:  #5a47e0;
+  --mmb-accent-glow:  rgba(109,94,252,.30);
+  --mmb-grad:         linear-gradient(135deg, #6d5efc 0%, #a855f7 55%, #ec4899 100%);
+  --mmb-grad-soft:    linear-gradient(135deg, rgba(109,94,252,.12), rgba(168,85,247,.10));
+  --mmb-green:        #0f9d58;
+  --mmb-green-bg:     #d7f7e6;
+  --mmb-red:          #e23744;
+  --mmb-red-bg:       #fde4e6;
+  --mmb-yellow:       #e8920c;
+  --mmb-yellow-bg:    #fdefce;
+  --mmb-blue:         #2f7bf6;
+  --mmb-blue-bg:      #dbe9ff;
+  --mmb-shadow:       0 1px 2px rgba(16,24,64,.06), 0 4px 16px rgba(16,24,64,.05);
+  --mmb-shadow-lg:    0 8px 30px rgba(16,24,64,.12);
+  --mmb-glass:        rgba(255,255,255,.72);
+  --mmb-glass-brd:    rgba(255,255,255,.6);
+  --mmb-mesh:         radial-gradient(1200px 600px at 12% -8%, rgba(109,94,252,.10), transparent 60%),
+                      radial-gradient(900px 500px at 100% 0%, rgba(236,72,153,.07), transparent 55%);
   --mmb-sidebar-w:    220px;
-  --mmb-radius:       12px;
-  --mmb-radius-sm:    8px;
+  --mmb-radius:       14px;
+  --mmb-radius-sm:    9px;
 }
 
 [data-theme="dark"] {
-  --mmb-bg:           #0f1117;
-  --mmb-surface:      #1a1d27;
-  --mmb-surface2:     #141720;
-  --mmb-border:       #2d3148;
-  --mmb-border2:      #3d4266;
-  --mmb-text:         #f1f5f9;
-  --mmb-text2:        #cbd5e1;
-  --mmb-muted:        #94a3b8;
-  --mmb-accent:       #6366f1;
-  --mmb-accent2:      #818cf8;
-  --mmb-accent-bg:    #1e1b4b;
-  --mmb-accent-text:  #a5b4fc;
-  --mmb-green:        #22c55e;
-  --mmb-green-bg:     #14532d;
-  --mmb-red:          #f87171;
-  --mmb-red-bg:       #7f1d1d;
-  --mmb-yellow:       #fbbf24;
-  --mmb-yellow-bg:    #78350f;
-  --mmb-blue:         #60a5fa;
-  --mmb-blue-bg:      #1e3a8a;
-  --mmb-shadow:       0 1px 3px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
-  --mmb-shadow-lg:    0 4px 16px rgba(0,0,0,.4);
+  --mmb-bg:           #07080f;
+  --mmb-surface:      #12141f;
+  --mmb-surface2:     #0c0e17;
+  --mmb-border:       #222539;
+  --mmb-border2:      #333757;
+  --mmb-text:         #f3f5fc;
+  --mmb-text2:        #c4cadf;
+  --mmb-muted:        #828aa6;
+  --mmb-accent:       #7c6bff;
+  --mmb-accent2:      #a988ff;
+  --mmb-accent-bg:    #191634;
+  --mmb-accent-text:  #c3b8ff;
+  --mmb-accent-glow:  rgba(124,107,255,.45);
+  --mmb-grad:         linear-gradient(135deg, #7c6bff 0%, #b15cff 52%, #ff5ca0 100%);
+  --mmb-grad-soft:    linear-gradient(135deg, rgba(124,107,255,.18), rgba(177,92,255,.12));
+  --mmb-green:        #2bd576;
+  --mmb-green-bg:     #0c2e1e;
+  --mmb-red:          #ff6470;
+  --mmb-red-bg:       #2e1116;
+  --mmb-yellow:       #ffc24b;
+  --mmb-yellow-bg:    #2e2310;
+  --mmb-blue:         #5b9bff;
+  --mmb-blue-bg:      #11203f;
+  --mmb-shadow:       0 1px 2px rgba(0,0,0,.4), 0 6px 22px rgba(0,0,0,.35);
+  --mmb-shadow-lg:    0 12px 40px rgba(0,0,0,.55);
+  --mmb-glass:        rgba(18,20,31,.62);
+  --mmb-glass-brd:    rgba(255,255,255,.07);
+  --mmb-mesh:         radial-gradient(1100px 600px at 10% -10%, rgba(124,107,255,.16), transparent 60%),
+                      radial-gradient(800px 500px at 100% 0%, rgba(255,92,160,.10), transparent 55%),
+                      radial-gradient(700px 500px at 50% 120%, rgba(177,92,255,.08), transparent 60%);
 }
 
 /* ── Base ─────────────────────────────────────────────── */
@@ -65,9 +80,28 @@ html, body, #root {
   margin: 0;
   padding: 0;
   background-color: var(--mmb-bg);
+  background-image: var(--mmb-mesh);
+  background-attachment: fixed;
   color: var(--mmb-text);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* Signature gradient text + helpers */
+.mmb-gradient-text {
+  background: var(--mmb-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.mmb-glass {
+  background: var(--mmb-glass);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--mmb-glass-brd);
+}
+.mmb-glow { box-shadow: 0 0 0 1px var(--mmb-accent-glow), 0 8px 30px var(--mmb-accent-glow); }
 
 /* ── Theme-aware utility classes ─────────────────────── */
 .mmb-bg       { background-color: var(--mmb-bg); }
@@ -81,6 +115,12 @@ html, body, #root {
   border: 1px solid var(--mmb-border);
   border-radius: var(--mmb-radius);
   box-shadow: var(--mmb-shadow);
+  position: relative;
+  transition: transform .18s cubic-bezier(.4,0,.2,1), box-shadow .18s, border-color .18s;
+}
+.mmb-card:hover {
+  box-shadow: var(--mmb-shadow-lg);
+  border-color: color-mix(in srgb, var(--mmb-accent) 30%, var(--mmb-border));
 }
 .mmb-input {
   background: var(--mmb-surface);
@@ -98,17 +138,19 @@ html, body, #root {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--mmb-accent) 15%, transparent);
 }
 .mmb-btn-primary {
-  background: var(--mmb-accent);
+  background: var(--mmb-grad);
+  background-size: 160% 160%;
   color: #fff;
   border: none;
   border-radius: var(--mmb-radius-sm);
-  padding: 8px 16px;
+  padding: 9px 18px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
-  transition: opacity .15s, transform .1s;
+  box-shadow: 0 6px 18px var(--mmb-accent-glow);
+  transition: transform .12s, box-shadow .2s, background-position .4s;
 }
-.mmb-btn-primary:hover { opacity: .9; }
+.mmb-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 26px var(--mmb-accent-glow); background-position: 100% 0; }
 .mmb-btn-primary:active { transform: scale(.98); }
 .mmb-btn-ghost {
   background: transparent;
@@ -161,7 +203,7 @@ html, body, #root {
   transition: transform .2s;
   box-shadow: 0 1px 3px rgba(0,0,0,.2);
 }
-.mmb-toggle input:checked + .mmb-toggle-slider { background: var(--mmb-accent); }
+.mmb-toggle input:checked + .mmb-toggle-slider { background: var(--mmb-grad); box-shadow: 0 0 10px var(--mmb-accent-glow); }
 .mmb-toggle input:checked + .mmb-toggle-slider:before { transform: translateX(18px); }
 
 /* KPI card top accent bar */
@@ -173,7 +215,7 @@ html, body, #root {
 
 /* Sidebar nav item active left border */
 .mmb-nav-active {
-  background: var(--mmb-accent-bg);
+  background: var(--mmb-grad-soft);
   color: var(--mmb-accent);
   border-left: 3px solid var(--mmb-accent);
 }

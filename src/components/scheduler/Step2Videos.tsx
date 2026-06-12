@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { Profile } from '../../types';
 import type { Channel, Video } from '../../store/useChannelStore';
+import {
+  extractVideoIdFromEntry,
+  shouldSkipVideoToday,
+  type WatchHistoryEntry,
+} from '../../utils/watchHistorySchedule';
 
 export type VideoEntry = { mode: 'title' | 'url'; value: string; title?: string; url?: string };
 
@@ -36,12 +42,14 @@ function parseYoutubeUrls(text: string): { title: string; url: string }[] {
   return out;
 }
 
-export default function Step2Videos({ schedule, profiles, channels, getVideos, onChange }: {
+export default function Step2Videos({ schedule, profiles, channels, getVideos, onChange, watchHistoryByProfile, allowSameDayRepeat }: {
   schedule: Step2Schedule;
   profiles: Profile[];
   channels: Channel[];
   getVideos: (channelId: number, filter?: string) => Video[];
   onChange: (s: Step2Schedule) => void;
+  watchHistoryByProfile?: Record<string, WatchHistoryEntry[]>;
+  allowSameDayRepeat?: boolean;
 }) {
   const selectedChannels = channels.filter(c => schedule.selectedChannels.includes(c.id));
   const [activeProfileId, setActiveProfileId] = useState(schedule.selectedProfiles[0] || '');
@@ -177,6 +185,21 @@ export default function Step2Videos({ schedule, profiles, channels, getVideos, o
     }
   };
 
+  const history = watchHistoryByProfile ?? {};
+  const allowRepeat = allowSameDayRepeat ?? false;
+
+  const isSkippedToday = (video: VideoEntry, profileId?: string) => {
+    const videoId = extractVideoIdFromEntry(video);
+    if (!videoId) return false;
+    if (schedule.assignmentMode === 'same-all') {
+      return schedule.selectedProfiles.some(pid =>
+        shouldSkipVideoToday(pid, videoId, history, allowRepeat),
+      );
+    }
+    if (!profileId) return false;
+    return shouldSkipVideoToday(profileId, videoId, history, allowRepeat);
+  };
+
   const renderChannelBlock = (ch: Channel, profileId?: string) => {
     const allVideos = getVideos(ch.id, 'enabled');
     const q = (videoSearch[ch.id] || '').trim().toLowerCase();
@@ -193,13 +216,20 @@ export default function Step2Videos({ schedule, profiles, channels, getVideos, o
         </div>
         {selected.length > 0 && (
           <div className="space-y-1 mb-3">
-            {selected.map((v, i) => (
-              <div key={i} className="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-1.5">
+            {selected.map((v, i) => {
+              const skipped = !allowRepeat && isSkippedToday(v, profileId);
+              return (
+              <div key={i} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 ${skipped ? 'bg-amber-900/20 border border-amber-700/30' : 'bg-gray-900'}`}>
                 <span className="text-xs text-gray-500 w-4">{i + 1}.</span>
-                <span className="text-xs text-green-400 flex-1 truncate">{v.title || v.value}</span>
+                <span className={`text-xs flex-1 truncate ${skipped ? 'text-amber-300' : 'text-green-400'}`}>{v.title || v.value}</span>
+                {skipped && (
+                  <span className="text-[10px] text-amber-400 whitespace-nowrap" title="Aaj pehle watched — skip hogi">
+                    ⏭ aaj watched
+                  </span>
+                )}
                 <button type="button" onClick={() => profileId ? removeVideoPerProfile(profileId, ch.id, i) : removeVideoSameAll(ch.id, i)} className="text-red-400 text-xs">✕</button>
               </div>
-            ))}
+            );})}
             <button type="button" onClick={() => shuffleSelected(ch.id, profileId)} className="text-xs text-purple-400 mt-1">Shuffle order</button>
           </div>
         )}
@@ -241,6 +271,16 @@ export default function Step2Videos({ schedule, profiles, channels, getVideos, o
         <h2 className="text-white font-bold text-lg mb-1">🎬 Select Videos</h2>
         <p className="text-gray-400 text-sm">Same for all profiles, or different lists per profile</p>
       </div>
+
+      {!allowRepeat && schedule.selectedProfiles.length > 0 && Object.keys(history).length > 0 && (
+        <div className="flex items-start gap-2 text-xs text-amber-300/90 bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-2">
+          <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+          <span>
+            <strong className="text-amber-200">Watch history:</strong> jo video aaj pehle watched hai,
+            run pe skip hogi — kal dubara chal sakti hai. Same din repeat ke liye Step 3 me toggle on karo.
+          </span>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <button type="button" onClick={() => onChange({ ...schedule, assignmentMode: 'same-all' })}

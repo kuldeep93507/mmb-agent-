@@ -212,11 +212,20 @@ def build_mlx_real_parameters(
     public_ip: str,
     proxy_payload: Optional[dict] = None,
     fingerprint_config: Optional[dict] = None,
+    screen_override: Optional[tuple[int, int]] = None,
 ) -> dict:
     """Multilogin POST /profile/create parameters."""
     _ = fingerprint_config
     has_proxy = bool(proxy_payload)
     fingerprint = build_mlx_fingerprint_payload(identity, os_type, public_ip)
+
+    if screen_override:
+        w, h = screen_override
+        fingerprint["screen"] = {
+            "width": w,
+            "height": h,
+            "pixel_ratio": fingerprint.get("screen", {}).get("pixel_ratio", 1),
+        }
 
     parameters: dict[str, Any] = {
         "flags": _build_mlx_flags(has_proxy),
@@ -235,13 +244,15 @@ def build_mlx_real_parameters(
 
     log.info(
         "[Antidetect] MLX profile %s | canvas=noise(%s) webgl=noise(%s) audio=noise(%s) "
-        "webrtc=custom(%s) tz=%s",
+        "webrtc=custom(%s) tz=%s screen=%dx%d",
         identity.profile_id[:8],
         fingerprint["canvas"]["seed"],
         fingerprint["webgl"]["seed"],
         fingerprint["audio"]["seed"],
         public_ip or "pending",
         identity.timezone,
+        fingerprint["screen"]["width"],
+        fingerprint["screen"]["height"],
     )
     return parameters
 

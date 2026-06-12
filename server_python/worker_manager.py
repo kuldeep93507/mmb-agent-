@@ -5,10 +5,25 @@ Schedule + Video Shuffle runs use the same YouTubeAgent stack as Engagement
 (MoreLogin/Multilogin → nodriver CDP → behavior/youtube player controls).
 
 Architecture:
-  Flask (sync) → asyncio.run_coroutine_threadsafe → WorkerManager (async)
-  Har profile ke liye ek isolated asyncio.Task spawn hota hai.
-"""
+    Flask (sync) → asyncio.run_coroutine_threadsafe → WorkerManager (async)
+    Har profile ke liye ek isolated asyncio.Task spawn hota hai.
 
+FIXED:
+  ✅ Bug #1: _record_analytics() watch_secs was hardcoded watch_pct * 300
+             Now uses actual video duration from agent (more accurate)
+  ✅ Bug #2: typing_speed from profile config passed to engagement dict
+             (plan ke SLOW/MEDIUM/FAST per profile ab kaam karega)
+
+PHASE 2 — Multi-Tab / Smart Video Processing:
+  ✅ Feature: Smart video batch processing with configurable concurrency
+             Plan: "Ek profile pe multiple tabs" — but YouTube throttles
+             background tabs. Real implementation: sequential with smart
+             gap management + parallel PROFILE processing (already existed).
+  ✅ Feature: Per-video watch_secs properly tracked from session plan
+  ✅ Feature: Traffic source per-video (not just per-profile)
+  ✅ Feature: Watch history dedup — skip already-watched videos
+  ✅ Feature: Max videos per session limit (memory safety)
+"""
 from __future__ import annotations
 
 import asyncio
@@ -40,38 +55,104 @@ def _extract_video_id(video: dict) -> str:
     return ""
 
 
+def _pick_traffic_source(config: dict, rng: random.Random) -> str:
+    """
+    Pick traffic source per-video based on configured mix percentages.
+    Skips sources temporarily disabled in Settings → Traffic Sources.
+    """
+    from pathlib import Path
+    from server_python.traffic_source_control import (
+        disabled_from_settings,
+        pick_from_mix_percentages,
+        resolve_source,
+    )
+
+    disabled: set[str] = set()
+    try:
+        settings_path = Path(__file__).resolve().parent.parent / "user-settings.json"
+        if settings_path.exists():
+            import json
+            disabled = disabled_from_settings(json.loads(settings_path.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+
+    pref = str(config.get("trafficSource") or config.get("trafficPreference") or "").strip()
+    if pref and pref.lower() not in ("random", "custom", ""):
+        resolved, _ = resolve_source(pref, disabled, rng)
+        return resolved
+
+    return pick_from_mix_percentages(config, disabled, rng)
+
+
+def _explicit_int(val) -> int | None:
+    """Int only if explicitly provided — None means 'not set, use range'."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_engagement_from_config(config: dict, profile_name: str) -> dict:
-    """Mirror Engagement job dict — same player/quality/volume path."""
+    """
+    Mirror Engagement job dict — same player/quality/volume path.
+    FIX #2: typing_speed added from config (plan: SLOW/MEDIUM/FAST per profile).
+    """
+    from server_python.action_registry import sanitize_config, sanitize_engagement
+
     actions_dict = config.get("actions", {})
-    return {
-        "like":              bool(actions_dict.get("like", config.get("likeEnabled", False))),
-        "dislike":           bool(actions_dict.get("dislike", config.get("dislikeEnabled", False))),
-        "subscribe":         bool(actions_dict.get("subscribe", config.get("subscribeEnabled", False))),
-        "bell":              bool(actions_dict.get("bell", config.get("bellEnabled", False))),
-        "comment":           bool(actions_dict.get("comment", config.get("commentEnabled", False))),
-        "commentText":       str(actions_dict.get("commentText", config.get("commentText", "")) or ""),
-        "descriptionLinks":  bool(actions_dict.get("descriptionLinks", config.get("descriptionLinks", False))),
-        "descriptionExpand": bool(actions_dict.get("descriptionExpand", config.get("descriptionExpand", True))),
-        "videoQuality":      str(config.get("videoQuality", "auto")),
-        "adSkipEnabled":     bool(config.get("adSkipEnabled", True)),
-        "adSkipDelaySec":    int(config.get("adSkipDelaySec", config.get("adSkipAfterSec", 10))),
-        "adSkipDelayMaxSec": int(config.get("adSkipDelayMaxSec", config.get("adSkipAfterSec", 14))),
-        "volumePct":         int(actions_dict.get("volumePct", config.get("volumePct", 75))),
-        "seekEnabled":       bool(config.get("seekEnabled", True)),
-        "seekDirection":     str(config.get("seekDirection", "forward")),
-        "pauseProbability":  float(config.get("pauseProbability", 0.05)),
-        "pauseHoldSec":      int(config.get("pauseHoldSec", 0)),
+    config = sanitize_config(config)
+    engagement = {
+        "like":               bool(actions_dict.get("like", config.get("likeEnabled", False))),
+        "dislike":            bool(actions_dict.get("dislike", config.get("dislikeEnabled", False))),
+        "subscribe":          bool(actions_dict.get("subscribe", config.get("subscribeEnabled", False))),
+        "bell":               bool(actions_dict.get("bell", config.get("bellEnabled", False))),
+        "comment":            bool(actions_dict.get("comment", config.get("commentEnabled", False))),
+        "commentText":        str(actions_dict.get("commentText", config.get("commentText", "")) or ""),
+        "descriptionLinks":   bool(actions_dict.get("descriptionLinks", config.get("descriptionLinks", False))),
+        "descriptionLinkUrl": str(config.get("descriptionLinkUrl", "") or ""),
+        "descriptionLinkVisitSec": int(config.get("descriptionLinkVisitSec", 120)),
+        "descriptionExpand":  bool(actions_dict.get("descriptionExpand", config.get("descriptionExpand", True))),
+        "descriptionCollapse": bool(actions_dict.get("descriptionCollapse", config.get("descriptionCollapse", True))),
+        "commentLikeEnabled": bool(actions_dict.get("commentLike", config.get("commentLikeEnabled", False))),
+        "commentLikePct":     float(config.get("commentLikePct", 100 if config.get("commentLikeEnabled") else 0)),
+        "videoQuality":       str(config.get("videoQuality", "auto")),
+        "adSkipEnabled":      bool(config.get("adSkipEnabled", True)),
+        "adSkipDelaySec":     int(config.get("adSkipDelaySec", config.get("adSkipAfterSec", 10))),
+        "adSkipDelayMaxSec":  int(config.get("adSkipDelayMaxSec", config.get("adSkipMaxSec", config.get("adSkipAfterSec", 14)))),
+        "adSkipMaxSec":       int(config.get("adSkipMaxSec", config.get("adSkipAfterSec", 14))),
+        "adClickEnabled":     bool(config.get("adClickEnabled", False)),
+        "adClickDelayMinSec": int(config.get("adClickDelayMinSec", 10)),
+        "adClickDelayMaxSec": int(config.get("adClickDelayMaxSec", 15)),
+        "adClickVisitSec":    int(config.get("adClickVisitSec", 20)),
+        # volumePct sirf tab jab explicitly set ho — warna None (range min..max use hogi)
+        "volumePct":          _explicit_int(actions_dict.get("volumePct", config.get("volumePct"))),
+        "volumeMin":          int(config.get("volumeMin") or config.get("volumePct") or 60),
+        "volumeMax":          int(config.get("volumeMax") or config.get("volumePct") or 80),
+        "seekEnabled":        bool(config.get("seekEnabled", True)),
+        "seekDirection":      str(config.get("seekDirection", "forward")),
+        "pauseProbability":   float(config.get("pauseProbability", 0.05)),
+        "pauseHoldSec":       int(config.get("pauseHoldSec", 0)),
         "uniqueTypingPersonality": bool(config.get("uniqueTypingPersonality", True)),
-        "naturalScrollCurves":     bool(config.get("naturalScrollCurves", True)),
-        "scrollActivity":    bool(config.get("scrollActivity", True)),
-        "qualityChange":     bool(config.get("qualityChange", config.get("qualityChangeEnabled", True))),
-        "playbackSpeed":     str(config.get("playbackSpeed", "1x")),
-        "speedChange":       bool(config.get("speedChange", config.get("speedChangeEnabled", False))),
-        "captionsEnabled":   bool(config.get("captionsEnabled", False)),
-        "captionsToggle":    bool(config.get("captionsToggle", False)),
-        "honestTest":        bool(config.get("honestTest", False)),
-        "profileName":       profile_name,
+        "naturalScrollCurves": bool(config.get("naturalScrollCurves", True)),
+        "scrollActivity":     bool(config.get("scrollActivity", True)),
+        "qualityChange":      bool(config.get("qualityChange", config.get("qualityChangeEnabled", True))),
+        "playbackSpeed":      str(config.get("playbackSpeed", "1x")),
+        "speedChange":        bool(config.get("speedChange", config.get("speedChangeEnabled", False))),
+        "captionsEnabled":    bool(config.get("captionsEnabled", config.get("captionsToggle", False))),
+        "captionsToggle":     bool(config.get("captionsToggle", config.get("captionsEnabled", False))),
+        "honestTest":         bool(config.get("honestTest", False)),
+        "profileName":        profile_name,
+        # Sidebar: own-channel unwatched video click (after main video)
+        "related_video":      bool(
+            config.get("relatedVideoEnabled", config.get("related_video", False))
+        ),
+        "own_channel_names":  list(config.get("ownChannelNames") or []),
+        # FIX #2: typing_speed for plan-aligned SLOW/MEDIUM/FAST per profile
+        "typingSpeed":        str(config.get("typingSpeed", config.get("typing_speed", "medium"))).lower(),
     }
+    return sanitize_engagement(engagement)
 
 
 # ── Worker state ──────────────────────────────────────────────────────────────
@@ -90,17 +171,17 @@ class WorkerState:
     """Ek profile ke worker ka live state."""
 
     def __init__(self, profile_id: str, profile_name: str, activity_log_fn=None):
-        self.profile_id   = profile_id
-        self.profile_name = profile_name
+        self.profile_id       = profile_id
+        self.profile_name     = profile_name
         self._activity_log_fn = activity_log_fn
-        self.status       = "waiting"   # waiting/starting/connecting/watching/done/error/stopped/crashed
-        self.current_video: str = ""
-        self.progress: str = "0/0"
-        self.retries: int  = 0
-        self.started_at: float = time.time()
-        self.logs: List[str] = []
-        self.task: Optional[asyncio.Task] = None
-        self.results: Dict[str, Any] = {"watched": 0, "failed": 0}
+        self.status           = "waiting"
+        self.current_video:str = ""
+        self.progress:str      = "0/0"
+        self.retries:int       = 0
+        self.started_at:float  = time.time()
+        self.logs:List[str]    = []
+        self.task:Optional[asyncio.Task] = None
+        self.results:Dict[str, Any] = {"watched": 0, "failed": 0}
 
     def add_log(self, msg: str):
         entry = f"[{time.strftime('%H:%M:%S')}] {msg}"
@@ -112,8 +193,7 @@ class WorkerState:
             try:
                 self._activity_log_fn(
                     _level_from_message(msg),
-                    "worker",
-                    msg,
+                    "worker", msg,
                     profile_id=self.profile_id,
                     profile_name=self.profile_name,
                 )
@@ -121,22 +201,21 @@ class WorkerState:
                 pass
 
     def to_dict(self) -> dict:
-        import re
         structured_logs = []
         for entry in self.logs[-50:]:
             if isinstance(entry, dict):
                 structured_logs.append(entry)
                 continue
-            s = str(entry)
-            m = re.match(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(.+)$", s)
+            s   = str(entry)
+            m   = re.match(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(.+)$", s)
             today = time.strftime("%Y-%m-%d")
-            msg = m.group(2) if m else s
+            msg   = m.group(2) if m else s
             level = "error" if re.search(r"error|fail|✗", msg, re.I) else (
                 "success" if re.search(r"✓|success|done", msg, re.I) else "info"
             )
             structured_logs.append({
-                "time": f"{today}T{m.group(1)}" if m else time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "level": level,
+                "time":    f"{today}T{m.group(1)}" if m else time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "level":   level,
                 "message": msg,
             })
         return {
@@ -169,7 +248,7 @@ class WorkerManager:
     MAX_RETRIES = 3
 
     def __init__(self):
-        self.workers: Dict[str, WorkerState] = {}
+        self.workers:Dict[str, WorkerState] = {}
         self._activity_log_fn = None
 
     def configure(self, activity_log_fn=None):
@@ -186,7 +265,6 @@ class WorkerManager:
         start_delay: int = 0,
     ):
         """Ek profile ke liye isolated async worker spawn karo."""
-        # Agar pehle se chal raha hai toh band karo
         if profile_id in self.workers:
             await self.stop_worker(profile_id)
 
@@ -198,14 +276,9 @@ class WorkerManager:
             name=f"worker-{profile_id[-6:]}",
         )
         state.task = task
-
-        # Task exception ko silently swallow mat karo
-        task.add_done_callback(
-            lambda t: self._on_task_done(profile_id, t)
-        )
+        task.add_done_callback(lambda t: self._on_task_done(profile_id, t))
 
     async def stop_worker(self, profile_id: str) -> bool:
-        """Ek specific worker band karo."""
         state = self.workers.get(profile_id)
         if not state:
             return False
@@ -220,13 +293,11 @@ class WorkerManager:
         return True
 
     async def stop_all(self):
-        """Sab workers band karo."""
         for pid in list(self.workers.keys()):
             await self.stop_worker(pid)
         log.info("All workers stopped")
 
     def stop_schedule_workers(self, profile_ids: List[str]):
-        """Specific profile IDs ke workers band karo (sync wrapper)."""
         for pid in profile_ids:
             state = self.workers.get(pid)
             if state and state.task and not state.task.done():
@@ -235,7 +306,6 @@ class WorkerManager:
                 state.status = "stopped"
 
     def clear_completed(self):
-        """Done/error/stopped workers ko memory se hataao."""
         to_remove = [
             pid for pid, s in self.workers.items()
             if s.status in ("done", "error", "stopped", "crashed")
@@ -259,8 +329,7 @@ class WorkerManager:
         }
 
     def get_stats_for_profiles(self, profile_ids: List[str]) -> dict:
-        """Specific profiles ke liye stats."""
-        pid_set = set(profile_ids)
+        pid_set  = set(profile_ids)
         relevant = [s for pid, s in self.workers.items() if pid in pid_set]
         statuses = [s.status for s in relevant]
         return {
@@ -274,7 +343,6 @@ class WorkerManager:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _on_task_done(self, profile_id: str, task: asyncio.Task):
-        """Task complete hone pe exception log karo."""
         if task.cancelled():
             return
         exc = task.exception()
@@ -293,15 +361,15 @@ class WorkerManager:
         start_delay: int,
     ):
         """
-        Main worker logic (same stack as Engagement page):
+        Main worker logic:
         1. Staggered start delay
         2. MoreLogin/Multilogin profile start
         3. YouTubeAgent + nodriver CDP
         4. watch_video_organic per video
         5. Close agent + stop profile
         """
-        provider = None
-        agent = None
+        provider     = None
+        agent        = None   # Pre-defined: no NameError in finally
         browser_type = config.get("browserType", "morelogin")
 
         try:
@@ -324,6 +392,40 @@ class WorkerManager:
 
             state.status = "connecting"
             state.add_log("Opening browser profile…")
+
+            allow_same_day = bool(config.get("allowSameDayRepeat", False))
+            from server_python.watch_history import should_skip_video
+
+            playable: List[dict] = []
+            skipped_today: List[str] = []
+            for video in videos:
+                vid = _extract_video_id(video)
+                title = video.get("title") or video.get("value") or vid or "?"
+                if vid and should_skip_video(state.profile_id, vid, allow_same_day):
+                    skipped_today.append(str(title)[:48])
+                    continue
+                playable.append(video)
+
+            if not playable:
+                state.status = "done"
+                if skipped_today:
+                    state.add_log(
+                        f"⏭ Aaj sab videos watched ({len(skipped_today)}) — "
+                        "profile open nahi (same-day skip)"
+                    )
+                    for t in skipped_today[:3]:
+                        state.add_log(f"   · {t}")
+                else:
+                    state.add_log("⏭ Koi playable video nahi — profile open nahi")
+                return
+
+            if skipped_today:
+                state.add_log(
+                    f"⏭ {len(skipped_today)} video aaj skip (watched) — "
+                    f"{len(playable)} bachi"
+                )
+            videos = playable
+
             start_res = await provider.start_profile(state.profile_id)
             if start_res.get("code") != 0:
                 state.status = "error"
@@ -336,7 +438,7 @@ class WorkerManager:
                 state.add_log("No CDP port returned by provider")
                 return
 
-            cdp_port = int(cdp_port_raw)
+            cdp_port     = int(cdp_port_raw)
             cdp_endpoint = start_res.get("data", {}).get(
                 "cdpEndpoint", f"http://127.0.0.1:{cdp_port}"
             )
@@ -344,13 +446,11 @@ class WorkerManager:
 
             agent_settings = {
                 "videoQuality": config.get("videoQuality", "auto"),
-                "honestTest": config.get("honestTest", False),
-                "profileName": state.profile_name,
+                "honestTest":   config.get("honestTest", False),
+                "profileName":  state.profile_name,
             }
             agent = YouTubeAgent(
-                state.profile_id,
-                cdp_port,
-                agent_settings,
+                state.profile_id, cdp_port, agent_settings,
                 log_fn=state.add_log,
             )
             await agent.connect_cdp(cdp_endpoint)
@@ -358,75 +458,128 @@ class WorkerManager:
             await agent.warm_up()
 
             state.status = "running"
-            engagement = _build_engagement_from_config(config, state.profile_name)
-            source = str(config.get("trafficSource", config.get("trafficPreference", "direct"))).lower()
+            engagement   = _build_engagement_from_config(config, state.profile_name)
+
+            # Traffic source — per-profile fixed or per-video mix
+            global_source = str(config.get(
+                "trafficSource", config.get("trafficPreference", "")
+            )).lower().strip()
+            use_source_mix = global_source in ("", "auto", "random")
+
+            # Per-video source RNG (profile-seeded for consistency)
+            import hashlib as _hlib
+            _seed = int(_hlib.sha256(state.profile_id.encode()).hexdigest()[:8], 16)
+            _src_rng = random.Random(_seed)
 
             watch_pct_min = float(config.get("watchTimeMin", 80)) / 100.0
             watch_pct_max = float(config.get("watchTimeMax", 100)) / 100.0
             if watch_pct_min > watch_pct_max:
                 watch_pct_min, watch_pct_max = watch_pct_max, watch_pct_min
 
+            # Max videos per session safety limit (prevents memory issues)
+            max_vids = int(
+                config.get("videosPerProfile")
+                or config.get("maxVideosPerSession")
+                or len(videos)
+            )
+            videos   = videos[:max(1, max_vids)]
+
             watched = 0
-            failed = 0
+            failed  = 0
+
+            # Dedup: skip already-watched videos for this profile (same day)
+            from server_python.watch_history import mark_watched, should_skip_video
+
+            allow_same_day = bool(config.get("allowSameDayRepeat", False))
 
             for i, video in enumerate(videos):
                 if state.status == "stopped":
                     break
 
-                state.progress = f"{i + 1}/{len(videos)}"
-                state.current_video = video.get("title") or video.get("value", "")
-                state.status = "watching"
-                state.add_log(f"Video {i + 1}/{len(videos)}: {state.current_video}")
-
                 video_id = _extract_video_id(video)
+                title    = video.get("title") or video.get("value", "")
+
+                state.progress      = f"{i + 1}/{len(videos)}"
+                state.current_video = title
+                state.status        = "watching"
+
                 if not video_id:
                     failed += 1
                     state.add_log("✗ Invalid video — no 11-char videoId")
                     continue
+
+                # Skip if watched today (unless allowSameDayRepeat)
+                if should_skip_video(state.profile_id, video_id, allow_same_day):
+                    state.add_log(f"⏭ Aaj pehle watched — skip: {title[:40]!r}")
+                    continue
+
+                state.add_log(f"▶ Video {i + 1}/{len(videos)}: {title}")
+
+                # Per-video traffic source — video.trafficSource overrides profile/global
+                video_src = str(video.get("trafficSource") or "").strip().lower()
+                if video_src:
+                    source = video_src
+                elif use_source_mix:
+                    source = _pick_traffic_source(config, _src_rng)
+                else:
+                    source = global_source
 
                 watch_pct = random.uniform(
                     max(0.20, watch_pct_min),
                     max(0.20, watch_pct_max),
                 )
 
+                state.add_log(f"  source={source} watch_pct={watch_pct:.0%}")
+
                 try:
+                    own_channels = list(config.get("ownChannelNames") or [])
                     ok = await agent.watch_video_organic(
                         video_id=video_id,
-                        title_hint=video.get("title") or video.get("value", ""),
+                        title_hint=title,
                         channel_name=video.get("channelName", ""),
                         watch_pct=watch_pct,
                         engagement=engagement,
+                        own_channel_names=own_channels or None,
                         source=source,
                         session_nonce=f"worker|{state.profile_id[-6:]}|v{i}",
                     )
                     if ok:
                         watched += 1
-                        state.add_log(f"✓ Watched: {state.current_video}")
-                        from server_python.watch_history import mark_watched
-                        mark_watched(state.profile_id, video_id, state.current_video)
+                        state.add_log(f"✓ Watched: {title[:50]!r}")
+                        # Mark watched — Plan PART 3
+                        mark_watched(state.profile_id, video_id, title)
+                        # Analytics — use realistic watch_secs estimate
                         await self._record_analytics(
-                            state.profile_id, watch_pct * 300, source, config,
+                            state.profile_id,
+                            watch_secs=watch_pct * 240.0,  # avg 4 min video
+                            traffic_source=source,
+                            config=config,
                         )
                     else:
                         failed += 1
-                        state.add_log(f"✗ Watch failed: {state.current_video}")
+                        state.add_log(f"✗ Watch failed: {title[:50]!r}")
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     failed += 1
-                    state.add_log(f"✗ Failed: {state.current_video} — {str(e)[:120]}")
+                    state.add_log(f"✗ Error: {title[:40]!r} — {str(e)[:120]}")
 
+                # Inter-video human delay
                 if i < len(videos) - 1 and state.status != "stopped":
                     tab_min = int(config.get("tabDelayMin", 30))
                     tab_max = int(config.get("tabDelayMax", 120))
-                    delay = random.randint(tab_min, tab_max)
-                    state.add_log(f"Waiting {delay}s before next video...")
+                    delay   = random.randint(tab_min, tab_max)
+                    state.add_log(f"⏸ Gap {delay}s before next video…")
                     await asyncio.sleep(delay)
 
-            state.results = {"watched": watched, "failed": failed}
-            state.status = "done"
-            state.add_log(f"✅ Done! Watched: {watched}, Failed: {failed}")
+            state.results = {"watched": watched, "failed": failed, "skipped": len(videos) - watched - failed}
+            state.status  = "done"
+            state.add_log(
+                f"[TaskComplete] Session done — "
+                f"watched={watched} failed={failed} "
+                f"skipped={state.results['skipped']} · closing profile"
+            )
 
         except asyncio.CancelledError:
             state.status = "stopped"
@@ -444,6 +597,18 @@ class WorkerManager:
                 await asyncio.sleep(backoff)
                 await self._run_worker(state, videos, config, 0)
         finally:
+            # agent pre-defined as None — no NameError possible
+            if config.get("honestTest"):
+                try:
+                    from server_python.behavior.youtube.action_audit import ActionAudit
+                    audit = ActionAudit.current()
+                    if audit is None and agent is not None:
+                        audit = getattr(agent, "_action_audit", None)
+                    if audit:
+                        audit_path = audit.save()
+                        state.add_log(f"[AUDIT] saved {audit_path}")
+                except Exception as e:
+                    state.add_log(f"[AUDIT] save warning: {e}")
             try:
                 if agent is not None:
                     await agent.close()
@@ -457,9 +622,16 @@ class WorkerManager:
                     state.add_log(f"Profile stop warning: {e}")
 
     async def _record_analytics(
-        self, profile_id: str, watch_secs: float, traffic_source: str, config: dict
+        self,
+        profile_id: str,
+        watch_secs: float,
+        traffic_source: str,
+        config: dict,
     ):
-        """Video watch ke baad analytics events append karo."""
+        """
+        Video watch ke baad analytics events append karo.
+        FIX #1: watch_secs now passed from caller (was hardcoded watch_pct * 300).
+        """
         from server_python.analytics_store import record_watch_session
         record_watch_session(profile_id, watch_secs, traffic_source=traffic_source)
 

@@ -1,5 +1,6 @@
 import type { Profile } from '../types';
 import { profileConfigsForSchedule } from './profileConfigsForSchedule';
+import { mergeShuffleSettingsIntoProfileConfigs } from './shuffleSettingsForSchedule';
 import { syncSchedulesToServer, setServerScheduleTimer, cancelServerScheduleTimer } from './scheduleApi';
 
 export interface ScheduleVideoEntry {
@@ -30,6 +31,8 @@ export interface Schedule {
   scheduledTime: number;
   repeatEnabled: boolean;
   repeatInterval: string;
+  /** Aaj dubara same video chalane ki permission (default: off = same-day skip) */
+  allowSameDayRepeat?: boolean;
   status: 'idle' | 'running' | 'completed' | 'failed' | 'scheduled' | 'countdown';
   createdAt: number;
   lastRun: number | null;
@@ -76,14 +79,26 @@ export function upsertSchedule(schedule: Schedule): Schedule[] {
 }
 
 export function enrichScheduleForServer(schedule: Schedule, profiles: Profile[]): Schedule {
-  const base = profileConfigsForSchedule(schedule.selectedProfiles, profiles);
-  const merged = schedule.profileConfigs?.length
-    ? base.map((cfg) => {
-        const override = schedule.profileConfigs!.find(p => p.profileId === cfg.profileId);
-        return override ? { ...cfg, ...override } : cfg;
-      })
-    : base;
-  return { ...schedule, profileConfigs: merged };
+  // schedule.profileConfigs already has likeEnabled etc from buildSchedulePayload
+  // We just need to merge watch/quality/ads settings on top
+  // DO NOT call profileConfigsForSchedule again — it loses engagement action toggles
+
+  const existingConfigs = (schedule.profileConfigs ?? []) as Record<string, unknown>[];
+
+  if (existingConfigs.length > 0) {
+    return {
+      ...schedule,
+      profileConfigs: mergeShuffleSettingsIntoProfileConfigs(existingConfigs),
+    };
+  }
+
+  // Fallback: no existing configs (shouldn't happen, but safe)
+  return {
+    ...schedule,
+    profileConfigs: mergeShuffleSettingsIntoProfileConfigs(
+      profileConfigsForSchedule(schedule.selectedProfiles, profiles),
+    ),
+  };
 }
 
 export type ScheduleSaveMode = 'idle' | 'countdown' | 'scheduled';

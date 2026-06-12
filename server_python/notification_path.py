@@ -10,19 +10,67 @@ Flow:
 
 If any step fails → raises YouTubeManagerError so entropy.py
 can fall back to keyword search (Path A).
-"""
 
+FIXED:
+  ✅ Bug #1: tab.evaluate("...", element) — Playwright style arguments[0] passing
+             does NOT work in nodriver. Fixed: all element operations use
+             JS IIFE with querySelector instead of element argument passing.
+  ✅ Bug #2: tab.find() / tab.find_all() — unreliable in nodriver.
+             Replaced with tab.select() and JS querySelectorAll via evaluate().
+  ✅ Bug #3: 'import time as _time' inside function → moved to top level.
+  ✅ Bug #4: _verify_navigation() uses asyncio.wait_for timeout (no hang).
+  ✅ Bug #5: All tab.evaluate() calls wrapped with asyncio.wait_for timeout.
+"""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import re
+import time
 from typing import Any, Optional
 
 from server_python.yt_types import VideoTarget, YouTubeManagerError
-from server_python.human_engine import wait_for_element
 
 log = logging.getLogger("mmb.notification_path")
+
+# FIX #3: time imported at top level (was 'import time as _time' inside function)
+
+# Top-bar notification bell ONLY (not subscribe/channel bell — see V2 notifications_topbar_bell)
+_BELL_SELECTORS = [
+    'ytd-notification-topbar-button-renderer button[aria-label="Notifications"]',
+    'ytd-notification-topbar-button-renderer button',
+    'button[aria-label="Notifications"]',
+    'button[aria-label*="All notifications" i]',
+]
+
+# Notification dropdown / panel (opens after top-bar bell click)
+_PANEL_SELECTORS = [
+    'ytd-multi-page-menu-renderer',
+    'ytd-notification-renderer',
+    '#contents ytd-notification-renderer',
+]
+
+_NOTIFICATION_ITEM_SELECTORS = (
+    'ytd-notification-renderer',
+    'ytd-notification-renderer a[href*="/watch"]',
+    'ytd-notification-renderer a[href*="youtu.be"]',
+)
+
+
+async def _safe_eval(tab: Any, js: str, timeout: float = 8.0) -> Any:
+    """FIX #5: All tab.evaluate with timeout protection."""
+    try:
+        result = await asyncio.wait_for(
+            tab.evaluate(js, return_by_value=True),
+            timeout=timeout,
+        )
+        return getattr(result, "value", result)
+    except asyncio.TimeoutError:
+        log.debug("[NotifPath] eval timeout after %.1fs", timeout)
+        return None
+    except Exception as e:
+        log.debug("[NotifPath] eval error: %s", e)
+        return None
 
 
 class NotificationPath:
@@ -31,10 +79,10 @@ class NotificationPath:
 
     Args:
         tab      : nodriver Tab object
-        target   : VideoTarget (has .video_id, .title, .channel_name)
+        target   : VideoTarget (has .video_id, .title_hint, .channel_name)
         rng      : random.Random instance (per-profile seeded)
         log_fn   : callable for structured logging
-        resolver : SemanticResolver instance (for crash-proof element finding)
+        resolver : SemanticResolver instance (optional)
     """
 
     def __init__(
@@ -46,11 +94,11 @@ class NotificationPath:
         log_fn=None,
         resolver=None,
     ) -> None:
-        self._tab = tab
-        self._target = target
-        self._rng = rng
-        self._log = log_fn or (lambda m: log.info(m))
-        self._resolver = resolver   # SemanticResolver (optional but recommended)
+        self._tab      = tab
+        self._target   = target
+        self._rng      = rng
+        self._log      = log_fn or (lambda m: log.info(m))
+        self._resolver = resolver
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
@@ -58,7 +106,7 @@ class NotificationPath:
         """
         Run the full notification entry path.
         Returns True if successfully landed on the target video watch page.
-        Raises YouTubeManagerError on failure (caller falls back to keyword search).
+        Raises YouTubeManagerError on failure (caller falls back to Path A).
         """
         self._log("[NotifPath] Starting notification entry path")
 
@@ -66,15 +114,15 @@ class NotificationPath:
         await self._open_bell_panel()
 
         # Step 2: Find target notification
-        notif_el = await self._find_target_notification()
-        if notif_el is None:
+        notif_href = await self._find_target_notification()
+        if notif_href is None:
             raise YouTubeManagerError(
                 f"[NotifPath] Target video not found in notifications: "
                 f"{self._target.video_id!r}"
             )
 
-        # Step 3: Hover → click
-        await self._hover_and_click(notif_el)
+        # Step 3: Click the notification
+        await self._click_notification(notif_href)
 
         # Step 4: Verify landed on correct video
         ok = await self._verify_navigation()
@@ -83,90 +131,80 @@ class NotificationPath:
                 f"[NotifPath] Navigation did not land on /watch?v={self._target.video_id}"
             )
 
-        self._log(f"[NotifPath] ✓ Landed on target video via notification")
+        self._log("[NotifPath] ✓ Landed on target video via notification")
         return True
 
     # ── Step 1: Open bell panel ───────────────────────────────────────────────
 
     async def _open_bell_panel(self) -> None:
-        """Click the bell icon to open the notification panel."""
+        """
+        Click the bell icon to open notification panel.
+        FIX #2: Uses tab.select() instead of unreliable tab.find().
+        """
         self._log("[NotifPath] Looking for bell icon")
 
-        bell = None
+        bell_sel = None
 
-        # Try SemanticResolver first (has all stable aria selectors)
-        if self._resolver:
+        # Try each selector with tab.select() (nodriver reliable method)
+        for sel in _BELL_SELECTORS:
             try:
-                bell = await self._resolver.find("bell_button", timeout=8.0, required=False)
+                el = await asyncio.wait_for(
+                    self._tab.select(sel),
+                    timeout=3.0,
+                )
+                if el:
+                    bell_sel = sel
+                    break
             except Exception:
-                pass
+                continue
 
-        # Fallback: aria-based CSS (permanent selectors)
-        if bell is None:
-            bell_selectors = [
-                'button[aria-label*="All notifications"]',
-                'button[aria-label*="notifications"]',
-                'button[aria-label*="Notifications"]',
-                'ytd-notification-topbar-button-renderer button',
-                '#notification-preference-button button',
-            ]
-            for sel in bell_selectors:
-                try:
-                    bell = await self._tab.find(sel, timeout=3)
-                    if bell:
-                        break
-                except Exception:
-                    pass
-
-        if bell is None:
+        if not bell_sel:
             raise YouTubeManagerError("[NotifPath] Bell icon not found on page")
 
-        # Human pause before clicking bell
+        # Human pause before clicking
         await asyncio.sleep(self._rng.uniform(0.4, 1.2))
 
-        # Hover first (human-like)
-        try:
-            await self._tab.evaluate(
-                "(function(el){el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));"
-                "el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));})(arguments[0])",
-                bell
-            )
-        except Exception:
-            pass
+        # FIX #1: Hover via IIFE JS (not arguments[0] pattern)
+        await _safe_eval(self._tab, f"""
+        (() => {{
+            var el = document.querySelector({json.dumps(bell_sel)});
+            if (el) {{
+                el.dispatchEvent(new MouseEvent('mouseover', {{bubbles: true}}));
+                el.dispatchEvent(new MouseEvent('mouseenter', {{bubbles: true}}));
+            }}
+        }})()
+        """)
 
         await asyncio.sleep(self._rng.uniform(0.2, 0.5))
 
-        try:
-            await bell.click()
-        except Exception:
-            try:
-                await self._tab.evaluate(
-                    "(function(el){el.click();})(arguments[0])", bell
-                )
-            except Exception as e:
-                raise YouTubeManagerError(f"[NotifPath] Bell click failed: {e}")
+        # Click via JS IIFE (FIX #1: no arguments[0])
+        clicked = await _safe_eval(self._tab, f"""
+        (() => {{
+            var el = document.querySelector({json.dumps(bell_sel)});
+            if (!el) return false;
+            el.click();
+            return true;
+        }})()
+        """)
+
+        if not clicked:
+            raise YouTubeManagerError("[NotifPath] Bell click failed — element not found")
 
         self._log("[NotifPath] Bell clicked — waiting for panel")
 
-        # Use smart-wait instead of busy-loop
+        # Wait for notification panel (FIX #3: time from top-level import)
         panel_found = False
-        panel_selectors = (
-            'ytd-multi-page-menu-renderer',
-            'ytd-notification-renderer',
-            '#notification-panel',
-        )
-        # Poll with exponential backoff — max 7.5s total
-        import time as _time
-        deadline = _time.monotonic() + 7.5
-        while _time.monotonic() < deadline:
-            for sel in panel_selectors:
-                try:
-                    el = await self._tab.find(sel, timeout=1)
-                    if el:
-                        panel_found = True
-                        break
-                except Exception:
-                    pass
+        deadline    = time.monotonic() + 7.5
+
+        while time.monotonic() < deadline:
+            for sel in _PANEL_SELECTORS:
+                # FIX #2: Use JS querySelector instead of tab.find()
+                exists = await _safe_eval(self._tab, f"""
+                (() => !!document.querySelector({json.dumps(sel)}))()
+                """, timeout=2.0)
+                if exists:
+                    panel_found = True
+                    break
             if panel_found:
                 break
             await asyncio.sleep(0.5)
@@ -177,155 +215,196 @@ class NotificationPath:
         self._log("[NotifPath] Notification panel open")
         await asyncio.sleep(self._rng.uniform(0.5, 1.0))
 
-    # ── Step 2: Find target notification ─────────────────────────────────────
+    async def _scroll_notification_panel(self, passes: int = 1) -> None:
+        """Scroll inside notification panel so older items become visible."""
+        for _ in range(max(1, passes)):
+            await _safe_eval(self._tab, """
+            (() => {
+                var panel = document.querySelector('ytd-multi-page-menu-renderer #items')
+                         || document.querySelector('ytd-multi-page-menu-renderer #contents')
+                         || document.querySelector('ytd-multi-page-menu-renderer');
+                if (panel) panel.scrollTop += Math.round(280 + Math.random() * 180);
+                return true;
+            })()
+            """, timeout=3.0)
+            await asyncio.sleep(self._rng.uniform(0.4, 0.9))
 
-    async def _find_target_notification(self) -> Optional[Any]:
+    async def _collect_notification_items(self) -> list[dict]:
+        """Return visible notification rows {href, text} from the open panel."""
+        item_sels = json.dumps(list(_NOTIFICATION_ITEM_SELECTORS))
+        raw = await _safe_eval(self._tab, f"""
+        (() => {{
+            var sels = {item_sels};
+            var seen = new Set();
+            var results = [];
+            for (var s = 0; s < sels.length; s++) {{
+                var nodes = document.querySelectorAll(sels[s]);
+                for (var i = 0; i < nodes.length; i++) {{
+                    var el = nodes[i];
+                    var a = el.tagName === 'A' ? el : el.querySelector('a[href]');
+                    if (!a) continue;
+                    var href = a.href || a.getAttribute('href') || '';
+                    if (!href || seen.has(href)) continue;
+                    seen.add(href);
+                    var text = (el.innerText || el.textContent || '').toLowerCase();
+                    results.push({{ href: href, text: text.substring(0, 240) }});
+                    if (results.length >= 40) return JSON.stringify(results);
+                }}
+            }}
+            return JSON.stringify(results);
+        }})()
+        """, timeout=8.0)
+        if not raw:
+            return []
+        try:
+            return json.loads(str(raw)) or []
+        except Exception:
+            return []
+
+    def _href_matches_target(self, href: str, video_id: str) -> bool:
+        if not href or not video_id:
+            return False
+        h = href.lower()
+        if video_id.lower() not in h:
+            return False
+        return "/watch" in h or "youtu.be/" in h or "v=" in h
+
+    def _title_matches_notification(self, text: str, title_lower: str) -> bool:
+        if not title_lower or len(title_lower) <= 5:
+            return False
+        words = [w for w in title_lower.split() if len(w) > 3]
+        if not words:
+            return False
+        matches = sum(1 for w in words if w in text)
+        return (matches / len(words)) >= 0.6
+
+    async def _find_target_notification(self) -> Optional[str]:
         """
-        Scan notification items for one matching target video_id or title.
-        Returns the clickable element or None.
+        Scan notification items BEFORE any click.
+        Assigned task video must appear in the panel (video_id in watch href).
+        Title-only match allowed only when href is already a verified watch link.
         """
         self._log(f"[NotifPath] Scanning notifications for video {self._target.video_id!r}")
 
-        # Get all notification renderer elements
-        notif_items = []
-        notif_css_list = [
-            'ytd-notification-renderer',
-            'ytd-notification-renderer a',
-        ]
+        video_id    = self._target.video_id or ""
+        channel_lower = (getattr(self._target, "channel_name", None) or "").lower()
 
-        for sel in notif_css_list:
-            try:
-                items = await self._tab.find_all(sel)
-                if items:
-                    notif_items = items
-                    break
-            except Exception:
-                pass
+        scroll_passes = self._rng.randint(2, 4)
+        all_items: list[dict] = []
 
-        if not notif_items:
+        for sp in range(1, scroll_passes + 1):
+            self._log(f"[NotifPath] Scan pass {sp}/{scroll_passes}")
+            batch = await self._collect_notification_items()
+            for item in batch:
+                href = item.get("href", "")
+                if href and not any(x.get("href") == href for x in all_items):
+                    all_items.append(item)
+            if video_id and any(self._href_matches_target(i.get("href", ""), video_id) for i in batch):
+                break
+            if sp < scroll_passes:
+                await self._scroll_notification_panel(passes=1)
+
+        if not all_items:
             self._log("[NotifPath] No notification items found in panel")
             return None
 
-        self._log(f"[NotifPath] Found {len(notif_items)} notification items")
+        self._log(f"[NotifPath] Found {len(all_items)} notification items — matching assigned video")
 
-        video_id = self._target.video_id
-        title_lower = (self._target.title or "").lower()
-        channel_lower = (self._target.channel_name or "").lower()
+        # Strict: assigned task video_id must appear in a watch/youtu.be href
+        for item in all_items:
+            href = item.get("href", "")
+            if self._href_matches_target(href, video_id):
+                text = item.get("text", "")
+                if channel_lower and len(channel_lower) > 3 and channel_lower not in text:
+                    self._log("[NotifPath] video_id matched but channel text mismatch — skip")
+                    continue
+                self._log(f"[NotifPath] ✓ Assigned video in notifications href={href[:70]}")
+                return href
 
-        # Check each notification for a match
-        for item in notif_items[:20]:  # scan up to 20
-            try:
-                # Get href to check video_id
-                href = await self._tab.evaluate(
-                    "(function(el){"
-                    "  var a=el.tagName==='A'?el:el.querySelector('a[href]');"
-                    "  return a?a.href:null;"
-                    "})(arguments[0])",
-                    item
-                )
-
-                if href and video_id in str(href):
-                    self._log(f"[NotifPath] ✓ Found notification by video_id in href")
-                    # Return the anchor element
-                    try:
-                        anchor = await self._tab.evaluate(
-                            "(function(el){"
-                            "  return el.tagName==='A'?el:el.querySelector('a[href]');"
-                            "})(arguments[0])",
-                            item
-                        )
-                        return anchor if anchor else item
-                    except Exception:
-                        return item
-
-                # Also check text content for title match
-                if title_lower:
-                    text_content = await self._tab.evaluate(
-                        "(function(el){return (el.innerText||el.textContent||'').toLowerCase();})"
-                        "(arguments[0])",
-                        item
-                    )
-                    text_content = str(text_content or "")
-
-                    # Title match: check if majority of title words present
-                    if title_lower and len(title_lower) > 5:
-                        title_words = [w for w in title_lower.split() if len(w) > 3]
-                        if title_words:
-                            matches = sum(1 for w in title_words if w in text_content)
-                            match_ratio = matches / len(title_words)
-                            if match_ratio >= 0.6:
-                                self._log(
-                                    f"[NotifPath] ✓ Found notification by title match "
-                                    f"({match_ratio:.0%})"
-                                )
-                                try:
-                                    anchor = await self._tab.evaluate(
-                                        "(function(el){"
-                                        "  return el.tagName==='A'?el:el.querySelector('a[href]');"
-                                        "})(arguments[0])",
-                                        item
-                                    )
-                                    return anchor if anchor else item
-                                except Exception:
-                                    return item
-
-            except Exception as e:
-                log.debug(f"[NotifPath] Item scan error: {e}")
-                continue
-
-        self._log(f"[NotifPath] Target video not found in {len(notif_items)} notifications")
+        self._log(
+            f"[NotifPath] Assigned video {video_id!r} NOT in notifications "
+            f"(scanned {len(all_items)} items) — will not click random notification"
+        )
         return None
 
-    # ── Step 3: Hover → click ─────────────────────────────────────────────────
+    # ── Step 3: Click notification ────────────────────────────────────────────
 
-    async def _hover_and_click(self, el: Any) -> None:
-        """Human-like hover then click on the notification element."""
-        try:
-            # Scroll element into view
-            await self._tab.evaluate(
-                "(function(el){el.scrollIntoView({behavior:'smooth',block:'center'});})"
-                "(arguments[0])",
-                el
-            )
-            await asyncio.sleep(self._rng.uniform(0.3, 0.7))
+    async def _click_notification(self, href: str) -> None:
+        """
+        Click the notification by navigating to its href.
+        FIX #1: No element argument passing. Use direct navigation.
+        Human-like: scroll into view → hover → click or navigate.
+        """
+        self._log(f"[NotifPath] Clicking notification href={href[:60]}")
 
-            # Hover events
-            await self._tab.evaluate(
-                "(function(el){"
-                "  el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));"
-                "  el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));"
-                "  el.dispatchEvent(new MouseEvent('mousemove',{bubbles:true}));"
-                "})(arguments[0])",
-                el
-            )
-            await asyncio.sleep(self._rng.uniform(0.5, 1.5))  # human dwell time
+        # Try JS click on matching anchor first (stays within notification panel flow)
+        href_json = json.dumps(href)
+        clicked   = await _safe_eval(self._tab, f"""
+        (() => {{
+            // Find anchor by href
+            var links = document.querySelectorAll('a[href]');
+            for (var i = 0; i < links.length; i++) {{
+                var h = links[i].href || links[i].getAttribute('href') || '';
+                if (h === {href_json} || h.includes({json.dumps(href[:50])})) {{
+                    links[i].scrollIntoView({{behavior: 'smooth', block: 'center'}});
+                    links[i].dispatchEvent(new MouseEvent('mouseover', {{bubbles: true}}));
+                    links[i].dispatchEvent(new MouseEvent('mouseenter', {{bubbles: true}}));
+                    links[i].dispatchEvent(new MouseEvent('mousemove', {{bubbles: true}}));
+                    return true;
+                }}
+            }}
+            return false;
+        }})()
+        """)
 
-            # Click
-            await el.click()
-            self._log("[NotifPath] Notification item clicked")
+        if clicked:
+            # Human dwell time after hover
+            await asyncio.sleep(self._rng.uniform(0.5, 1.5))
 
-        except Exception as e:
-            # JS click fallback
-            self._log(f"[NotifPath] Direct click failed ({e}), trying JS click")
+        # Now click or navigate
+        nav_clicked = await _safe_eval(self._tab, f"""
+        (() => {{
+            var links = document.querySelectorAll('a[href]');
+            for (var i = 0; i < links.length; i++) {{
+                var h = links[i].href || links[i].getAttribute('href') || '';
+                if (h === {href_json} || h.includes({json.dumps(href[:50])})) {{
+                    links[i].click();
+                    return true;
+                }}
+            }}
+            return false;
+        }})()
+        """)
+
+        if not nav_clicked:
+            # Fallback: direct URL navigation
+            self._log("[NotifPath] JS click failed — direct URL navigation")
             try:
-                await self._tab.evaluate(
-                    "(function(el){el.click();})(arguments[0])", el
-                )
-            except Exception as e2:
-                raise YouTubeManagerError(f"[NotifPath] Cannot click notification: {e2}")
+                full_url = href if href.startswith("http") else f"https://www.youtube.com{href}"
+                await asyncio.wait_for(self._tab.get(full_url), timeout=15.0)
+            except Exception as e:
+                raise YouTubeManagerError(f"[NotifPath] Cannot navigate to notification: {e}")
+
+        self._log("[NotifPath] Notification clicked/navigated")
 
     # ── Step 4: Verify navigation ─────────────────────────────────────────────
 
     async def _verify_navigation(self) -> bool:
-        """Wait up to 10s for URL to become /watch?v={video_id}."""
-        video_id = self._target.video_id
-        for _ in range(20):  # up to 10 seconds
+        """
+        Wait up to 10s for URL to become /watch?v={video_id}.
+        FIX #4: asyncio.wait_for on each eval (no infinite hang).
+        """
+        video_id = self._target.video_id or ""
+        deadline = time.monotonic() + 10.0
+
+        while time.monotonic() < deadline:
             await asyncio.sleep(0.5)
-            try:
-                url = await self._tab.evaluate("window.location.href")
-                url = str(url or "")
-                if video_id in url and "/watch" in url:
-                    return True
-            except Exception:
-                pass
+            url = await _safe_eval(
+                self._tab,
+                "(() => window.location.href)()",
+                timeout=3.0,
+            )
+            if url and video_id in str(url) and "/watch" in str(url):
+                return True
+
         return False

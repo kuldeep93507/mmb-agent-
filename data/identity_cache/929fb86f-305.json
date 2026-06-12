@@ -1,0 +1,18 @@
+{
+  "profile_id": "929fb86f-305a-4225-b100-6eb33a9d8589",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Athens",
+  "timezone": "America/Chicago",
+  "lat": 32.1896,
+  "lon": -95.8443,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 2436094065,
+  "canvas_noise": 0.003552,
+  "webgl_noise": 0.003701,
+  "audio_noise": 9.716e-05,
+  "cached_at": 1781053870.0178533
+}

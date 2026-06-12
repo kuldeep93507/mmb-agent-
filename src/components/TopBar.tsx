@@ -21,7 +21,6 @@ const PAGE_LABELS: Record<string, string> = {
   engagement: 'Engagement',
   channels: 'Channels',
   backlinks: 'Backlinks',
-  recycle: 'Recycle Loop',
   manual: 'Manual Control',
   comments: 'Comments',
   monitor: 'Live Monitor',
@@ -29,6 +28,9 @@ const PAGE_LABELS: Record<string, string> = {
   'gmail-setup': 'Gmail Setup',
   logs: 'Activity Logs',
   settings: 'Settings',
+  fleet: 'Fleet Control',
+  'notification-hub': 'Notification Hub',
+  'future-agent': 'Future Autonomous Agent',
 };
 
 export default function TopBar({ profiles, logs, activeTab, newVideoCount = 0 }: TopBarProps) {

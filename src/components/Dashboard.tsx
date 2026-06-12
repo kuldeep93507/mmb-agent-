@@ -158,6 +158,8 @@ export default function Dashboard({ profiles, setActiveTab }: DashboardProps) {
   const [data,    setData]       = useState<Awaited<ReturnType<typeof fetchAnalytics>>>(null);
   const [offline, setOffline]    = useState(false);
   const [stopping,setStopping]   = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [_tick, setTick] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -177,7 +179,17 @@ export default function Dashboard({ profiles, setActiveTab }: DashboardProps) {
     } catch { setOffline(true); }
   }, []);
 
-  useEffect(() => { refresh(); const id=setInterval(refresh,5000); return ()=>clearInterval(id); }, [refresh]);
+  useEffect(() => {
+    const doRefresh = async () => {
+      await refresh();
+      setLastRefreshed(new Date());
+    };
+    doRefresh();
+    const id = setInterval(doRefresh, 5000);
+    // Live counter — tick every second so "Xs ago" updates
+    const tickId = setInterval(() => setTick(t => t + 1), 1000);
+    return () => { clearInterval(id); clearInterval(tickId); };
+  }, [refresh]);
 
   /* Derived */
   const liveW    = workers.filter(w => isLive(w.status));
@@ -241,7 +253,11 @@ export default function Dashboard({ profiles, setActiveTab }: DashboardProps) {
                 color: offline ? 'var(--mmb-red)' : 'var(--mmb-green)',
               }}>
                 {offline ? <WifiOff size={9}/> : <Wifi size={9}/>}
-                {offline ? 'Offline' : 'Live · 5s'}
+                {offline
+                  ? 'Offline'
+                  : lastRefreshed
+                    ? `Updated ${Math.round((Date.now() - lastRefreshed.getTime()) / 1000)}s ago`
+                    : 'Connecting...'}
               </span>
             </div>
           </div>

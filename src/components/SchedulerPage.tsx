@@ -23,6 +23,11 @@ import { notifyScheduleComplete, notifyScheduleError } from '../services/notific
 import { shouldNotifyBrowser } from '../utils/notificationPrefs';
 import Step2Videos from './scheduler/Step2Videos';
 import ShuffleRunSettingsPanel from './ShuffleRunSettingsPanel';
+import {
+  analyzeScheduleSkipsToday,
+  fetchWatchHistoryBatch,
+  type WatchHistoryEntry,
+} from '../utils/watchHistorySchedule';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
@@ -44,6 +49,7 @@ interface Schedule {
   scheduledTime: number; // timestamp
   repeatEnabled: boolean;
   repeatInterval: string;
+  allowSameDayRepeat?: boolean;
   status: 'idle' | 'running' | 'completed' | 'failed' | 'scheduled' | 'countdown';
   createdAt: number;
   lastRun: number | null;
@@ -72,6 +78,20 @@ function saveSchedulesLocal(s: Schedule[]) {
 }
 
 function enrichScheduleForServer(schedule: Schedule, profiles: Profile[]): Schedule {
+  // schedule.profileConfigs already has likeEnabled etc from buildSchedulePayload
+  // We just need to merge watch/quality/ads settings on top
+  // DO NOT call profileConfigsForSchedule again — it loses engagement action toggles
+
+  const existingConfigs = (schedule.profileConfigs ?? []) as Record<string, unknown>[];
+
+  if (existingConfigs.length > 0) {
+    return {
+      ...schedule,
+      profileConfigs: mergeShuffleSettingsIntoProfileConfigs(existingConfigs),
+    };
+  }
+
+  // Fallback: no existing configs (shouldn't happen, but safe)
   return {
     ...schedule,
     profileConfigs: mergeShuffleSettingsIntoProfileConfigs(
@@ -113,6 +133,8 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
   const [editId, setEditId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [concurrency, setConcurrency] = useState<{ limit: number; running: number; available: number } | null>(null);
+  const [concWarning, setConcWarning] = useState<{scheduleId: string; msg: string} | null>(null);
+  const skipConcCheckRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,12 +228,18 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
     if (!schedule) return;
 
     const conc = await fetchConcurrency();
-    if (conc && schedule.selectedProfiles.length > conc.available) {
-      const proceed = window.confirm(
-        `Concurrency limit: ${conc.limit} max, ${conc.running} running, ${conc.available} slots free.\n` +
-        `You selected ${schedule.selectedProfiles.length} profiles — server will trim to ${conc.available}.\n\nContinue?`,
-      );
-      if (!proceed) return;
+    if (schedule.selectedProfiles.length > (conc?.available ?? 99)) {
+      if (skipConcCheckRef.current) {
+        skipConcCheckRef.current = false;
+      } else {
+        setConcWarning({
+          scheduleId: id,
+          msg: `⚠️ Concurrency: ${conc?.limit} max, ${conc?.running} running, ${conc?.available} free. ` +
+               `You selected ${schedule.selectedProfiles.length} profiles — ` +
+               `${schedule.selectedProfiles.length - (conc?.available ?? 0)} will queue.`,
+        });
+        return;
+      }
     }
 
     setSchedules(prev => prev.map(s => s.id === id ? {
@@ -220,10 +248,6 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
     } : s));
 
     try {
-      const profileConfigs = mergeShuffleSettingsIntoProfileConfigs(
-        profileConfigsForSchedule(schedule.selectedProfiles, profiles),
-      );
-
       let commentText = '';
       try {
         const comments = JSON.parse(localStorage.getItem('mmb_comments') || '[]');
@@ -232,7 +256,6 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
 
       const scheduleData = enrichScheduleForServer({
         ...schedule,
-        profileConfigs,
         commentText,
         sameForAll: schedule.sameForAll.map(cs => ({
           ...cs,
@@ -263,7 +286,7 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
       let msg = data.message || 'Started';
       if (data.trimmed) msg += ` (trimmed to ${data.workersSpawned} — limit ${data.limit})`;
       if (data.skippedNoVideos > 0) msg += ` · ${data.skippedNoVideos} profile(s) skipped (no videos)`;
-      setSchedules(prev => prev.map(s => s.id === id ? { ...s, lastRunMessage: msg, profileConfigs } : s));
+      setSchedules(prev => prev.map(s => s.id === id ? { ...s, lastRunMessage: msg, profileConfigs: scheduleData.profileConfigs } : s));
     } catch (e) {
       const err = e instanceof Error ? e.message : 'Network error';
       void postActivityLog('error', `Scheduler "${schedule.name}" network error: ${err}`, { source: 'scheduler' });
@@ -274,6 +297,12 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
 
     pollStatus(id, schedule.selectedProfiles);
   }, [schedules, channels, pollStatus, profiles]);
+
+  const handleRunForce = useCallback(async (id: string) => {
+    setConcWarning(null);
+    skipConcCheckRef.current = true;
+    await handleRun(id);
+  }, [handleRun]);
 
   useEffect(() => {
     handleRunRef.current = handleRun;
@@ -423,6 +452,9 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
           onImport={handleImport}
           onStartCountdown={handleStartCountdown}
           onCancelCountdown={handleCancelCountdown}
+          concWarning={concWarning}
+          setConcWarning={setConcWarning}
+          onRunForce={handleRunForce}
         />
       )}
       {view === 'create' && (
@@ -473,13 +505,16 @@ export default function SchedulerPage({ profiles, channels, getVideos }: Schedul
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SCHEDULE LIST VIEW
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreate, onEdit, onRun, onStop, onDelete, onDuplicate, onExport, onImport, onStartCountdown, onCancelCountdown }: {
+function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreate, onEdit, onRun, onStop, onDelete, onDuplicate, onExport, onImport, onStartCountdown, onCancelCountdown, concWarning, setConcWarning, onRunForce }: {
   schedules: Schedule[]; profiles: Profile[]; channels: Channel[]; now: number;
   concurrency: { limit: number; running: number; available: number } | null;
   onCreate: () => void; onEdit: (id: string) => void; onRun: (id: string) => void;
   onStop: (id: string) => void; onDelete: (id: string) => void;
   onDuplicate: (id: string) => void; onExport: () => void; onImport: () => void;
   onStartCountdown: (id: string) => void; onCancelCountdown: (id: string) => void;
+  concWarning: { scheduleId: string; msg: string } | null;
+  setConcWarning: (v: { scheduleId: string; msg: string } | null) => void;
+  onRunForce: (id: string) => void;
 }) {
   const running = schedules.filter(s => s.status === 'running').length;
   const scheduled = schedules.filter(s => s.status === 'countdown' || s.status === 'scheduled').length;
@@ -509,9 +544,18 @@ function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreat
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-800 bg-gray-950/50 flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Scheduler</h1>
-            <p className="text-gray-500 text-sm mt-0.5">{schedules.length} schedules • {running} running • {scheduled} waiting</p>
+          <div className="flex items-center gap-3">
+            <div style={{
+              width: 44, height: 44, borderRadius: 13, flexShrink: 0,
+              background: 'var(--mmb-grad)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 8px 22px var(--mmb-accent-glow)',
+            }}>
+              <Calendar size={22} color="#fff" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold"><span className="mmb-gradient-text">Scheduler</span></h1>
+              <p className="text-gray-500 text-sm mt-0.5">{schedules.length} schedules • {running} running • {scheduled} waiting</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={onImport} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs">
@@ -598,7 +642,10 @@ function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreat
                 onEdit={() => onEdit(s.id)} onRun={() => onRun(s.id)} onStop={() => onStop(s.id)}
                 onDelete={() => onDelete(s.id)} onDuplicate={() => onDuplicate(s.id)}
                 onStartCountdown={() => onStartCountdown(s.id)}
-                onCancelCountdown={() => onCancelCountdown(s.id)} />
+                onCancelCountdown={() => onCancelCountdown(s.id)}
+                concWarning={concWarning}
+                setConcWarning={setConcWarning}
+                onRunForce={() => onRunForce(s.id)} />
             ))}
           </div>
           {filtered.length > perPage && (
@@ -621,10 +668,13 @@ function ScheduleList({ schedules, profiles, channels, now, concurrency, onCreat
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SCHEDULE CARD (with live timer)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function ScheduleCard({ schedule: s, profiles: _profiles, channels: _channels, now, onEdit, onRun, onStop, onDelete, onDuplicate, onStartCountdown, onCancelCountdown }: {
+function ScheduleCard({ schedule: s, profiles: _profiles, channels: _channels, now, onEdit, onRun, onStop, onDelete, onDuplicate, onStartCountdown, onCancelCountdown, concWarning, setConcWarning, onRunForce }: {
   schedule: Schedule; profiles: Profile[]; channels: Channel[]; now: number;
   onEdit: () => void; onRun: () => void; onStop: () => void; onDelete: () => void;
   onDuplicate: () => void; onStartCountdown: () => void; onCancelCountdown: () => void;
+  concWarning: { scheduleId: string; msg: string } | null;
+  setConcWarning: (v: { scheduleId: string; msg: string } | null) => void;
+  onRunForce: () => void;
 }) {
   const countdownRemaining = s.status === 'countdown' && s.startedAt
     ? Math.max(0, (s.startedAt + s.countdownMinutes * 60000) - now)
@@ -765,6 +815,25 @@ function ScheduleCard({ schedule: s, profiles: _profiles, channels: _channels, n
           <button onClick={onDelete} className="bg-red-900/30 hover:bg-red-900/50 text-red-400 px-3 py-2 rounded-xl text-sm transition-all"><Trash2 size={14} /></button>
         </div>
       </div>
+      {concWarning && concWarning.scheduleId === s.id && (
+        <div className="mt-2 p-3 bg-yellow-900/30 border border-yellow-700/40 rounded-xl">
+          <p className="text-xs text-yellow-300 mb-2">{concWarning.msg}</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void onRunForce()}
+              className="px-3 py-1.5 bg-yellow-600/40 border border-yellow-600/50 text-yellow-200 rounded-lg text-xs font-semibold hover:bg-yellow-600/60 transition-all"
+            >
+              ✓ Proceed Anyway
+            </button>
+            <button
+              onClick={() => setConcWarning(null)}
+              className="px-3 py-1.5 bg-gray-700 border border-gray-600 text-gray-300 rounded-lg text-xs hover:bg-gray-600 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -783,10 +852,33 @@ function CreateSchedule({ profiles, channels, getVideos, existing, onSave, onBac
     assignmentMode: 'same-all', sameForAll: [], perProfile: [],
     profileDelayMin: 5, profileDelayMax: 20, tabDelayMin: 30, tabDelayMax: 120,
     runMode: 'manual', countdownMinutes: 15, scheduledTime: 0,
-    repeatEnabled: false, repeatInterval: '6hr',
+    repeatEnabled: false, repeatInterval: '6hr', allowSameDayRepeat: false,
     status: 'idle', createdAt: Date.now(), lastRun: null, startedAt: null,
     progress: { total: 0, done: 0, failed: 0 },
   });
+  const [watchHistory, setWatchHistory] = useState<Record<string, WatchHistoryEntry[]>>({});
+
+  useEffect(() => {
+    const ids = schedule.selectedProfiles;
+    if (!ids.length) {
+      setWatchHistory({});
+      return;
+    }
+    let cancelled = false;
+    void fetchWatchHistoryBatch(ids).then((h) => {
+      if (!cancelled) setWatchHistory(h);
+    });
+    return () => { cancelled = true; };
+  }, [schedule.selectedProfiles.join(',')]);
+
+  const skipAnalysis = useMemo(
+    () => analyzeScheduleSkipsToday(
+      schedule,
+      watchHistory,
+      schedule.allowSameDayRepeat ?? false,
+    ),
+    [schedule, watchHistory],
+  );
 
   const canNext = () => {
     if (step === 1) return schedule.name.trim().length > 0 && schedule.selectedProfiles.length > 0 && schedule.selectedChannels.length > 0;
@@ -833,8 +925,25 @@ function CreateSchedule({ profiles, channels, getVideos, existing, onSave, onBac
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-3xl mx-auto">
           {step === 1 && <Step1Setup schedule={schedule} profiles={profiles} channels={channels} onChange={setSchedule} />}
-          {step === 2 && <Step2Videos schedule={schedule} profiles={profiles} channels={channels} getVideos={getVideos} onChange={(s) => setSchedule(prev => ({ ...prev, ...s }))} />}
-          {step === 3 && <Step3Timer schedule={schedule} onChange={setSchedule} />}
+          {step === 2 && (
+            <Step2Videos
+              schedule={schedule}
+              profiles={profiles}
+              channels={channels}
+              getVideos={getVideos}
+              watchHistoryByProfile={watchHistory}
+              allowSameDayRepeat={schedule.allowSameDayRepeat ?? false}
+              onChange={(s) => setSchedule(prev => ({ ...prev, ...s }))}
+            />
+          )}
+          {step === 3 && (
+            <Step3Timer
+              schedule={schedule}
+              skipAnalysis={skipAnalysis}
+              profiles={profiles}
+              onChange={setSchedule}
+            />
+          )}
         </div>
       </div>
 
@@ -1002,7 +1111,15 @@ function clampCountdownMinutes(n: number) {
   return Math.max(1, Math.min(10080, Math.round(Number(n)) || 1));
 }
 
-function Step3Timer({ schedule, onChange }: { schedule: Schedule; onChange: (s: Schedule) => void }) {
+function Step3Timer({ schedule, skipAnalysis, profiles, onChange }: {
+  schedule: Schedule;
+  skipAnalysis: ReturnType<typeof analyzeScheduleSkipsToday>;
+  profiles: Profile[];
+  onChange: (s: Schedule) => void;
+}) {
+  const allowRepeat = schedule.allowSameDayRepeat ?? false;
+  const { skipPairs, profilesAllSkipped } = skipAnalysis;
+
   return (
     <div className="space-y-6">
       <div>
@@ -1102,6 +1219,56 @@ function Step3Timer({ schedule, onChange }: { schedule: Schedule; onChange: (s: 
           <p className="text-xs text-purple-300/70 mt-2">Save karte hi server timer set ho jayega — kitna time baki hai card pe dikhega (backend chalu hona chahiye).</p>
         </div>
       )}
+
+      {/* Watch history — same-day skip */}
+      <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+        <div className="flex items-center gap-3 mb-2">
+          <button
+            type="button"
+            onClick={() => onChange({ ...schedule, allowSameDayRepeat: !allowRepeat })}
+            className={`w-10 h-6 rounded-full relative transition-all flex-shrink-0 ${allowRepeat ? 'bg-amber-600' : 'bg-gray-700'}`}
+          >
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowRepeat ? 'left-5' : 'left-1'}`} />
+          </button>
+          <div>
+            <span className="text-white text-sm font-medium">Aaj dubara same video chalao</span>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Off (default): aaj watched video skip — kal phir chalegi. On: same din repeat allowed.
+            </p>
+          </div>
+        </div>
+
+        {!allowRepeat && skipPairs.length > 0 && (
+          <div className="mt-3 p-3 bg-amber-900/25 border border-amber-700/40 rounded-xl space-y-2">
+            <p className="text-xs text-amber-200 font-medium flex items-center gap-1.5">
+              <AlertTriangle size={14} />
+              {skipPairs.length} video(s) aaj pehle watched — run pe skip hongi
+            </p>
+            <ul className="text-xs text-amber-300/90 space-y-1 max-h-24 overflow-y-auto">
+              {skipPairs.slice(0, 8).map((p, i) => (
+                <li key={`${p.profileId}-${p.videoId}-${i}`} className="truncate">
+                  · {p.title.slice(0, 56)} — skip (aaj watched)
+                </li>
+              ))}
+              {skipPairs.length > 8 && (
+                <li className="text-amber-400/70">… aur {skipPairs.length - 8}</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        {!allowRepeat && profilesAllSkipped.length > 0 && (
+          <div className="mt-2 p-3 bg-red-900/25 border border-red-700/40 rounded-xl">
+            <p className="text-xs text-red-200 font-medium">
+              ⚠️ {profilesAllSkipped.length} profile(s) ke liye sab videos aaj watched —
+              profile open nahi hoga (kal ya toggle on karke chalao)
+            </p>
+            <p className="text-xs text-red-300/80 mt-1 truncate">
+              {profilesAllSkipped.map(pid => profiles.find(p => p.id === pid)?.name || pid.slice(-6)).join(', ')}
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Repeat */}
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">

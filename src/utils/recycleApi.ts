@@ -59,6 +59,15 @@ export async function startRecycleLoop(opts: {
   profiles: RecycleProfileInput[];
   cooldownMinMinutes: number;
   cooldownMaxMinutes: number;
+  actionToggles?: {
+    like?: boolean;
+    subscribe?: boolean;
+    bell?: boolean;
+    comment?: boolean;
+    scroll?: boolean;
+    qualityChange?: boolean;
+    captionsToggle?: boolean;
+  };
 }): Promise<{ ok: boolean; error?: string; status?: RecycleStatus }> {
   try {
     const res = await backendFetch('/api/recycle/start', {

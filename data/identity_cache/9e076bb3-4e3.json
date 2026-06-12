@@ -1,0 +1,18 @@
+{
+  "profile_id": "9e076bb3-4e31-4b50-a9e1-3b3286aca20d",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Galesburg",
+  "timezone": "America/Chicago",
+  "lat": 40.9509,
+  "lon": -90.3658,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 2560,
+  "screen_height": 1440,
+  "noise_seed": 1492897472,
+  "canvas_noise": 0.001041,
+  "webgl_noise": 0.003012,
+  "audio_noise": 1.171e-05,
+  "cached_at": 1780914111.4011645
+}

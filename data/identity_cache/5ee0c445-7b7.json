@@ -1,0 +1,18 @@
+{
+  "profile_id": "5ee0c445-7b70-4754-aac1-e687fabca471",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Pittsburgh",
+  "timezone": "America/New_York",
+  "lat": 40.4562,
+  "lon": -79.8163,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 3476823949,
+  "canvas_noise": 0.002947,
+  "webgl_noise": 0.003843,
+  "audio_noise": 2.91e-05,
+  "cached_at": 1781053956.0223823
+}

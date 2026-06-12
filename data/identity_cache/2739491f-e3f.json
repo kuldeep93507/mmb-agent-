@@ -1,0 +1,18 @@
+{
+  "profile_id": "2739491f-e3f3-4791-a74a-953aeed3153d",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Secaucus",
+  "timezone": "America/New_York",
+  "lat": 40.7876,
+  "lon": -74.06,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1280,
+  "screen_height": 800,
+  "noise_seed": 1474779095,
+  "canvas_noise": 0.004929,
+  "webgl_noise": 0.001707,
+  "audio_noise": 5.295e-05,
+  "cached_at": 1780914056.8981123
+}

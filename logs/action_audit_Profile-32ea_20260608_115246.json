@@ -1,0 +1,100 @@
+{
+  "profile_id": "c58a40dc-d6ff-4234-8d26-a592804d32ea",
+  "profile_name": "Profile-32ea",
+  "login_state": true,
+  "saved_at": "2026-06-08T06:22:46Z",
+  "truth_table": [
+    {
+      "action": "autoplay_off",
+      "pass": false,
+      "clicked": false,
+      "reason": "toggle not visible or still ON"
+    },
+    {
+      "action": "volume_75",
+      "pass": false,
+      "clicked": false,
+      "reason": "slider=75% target=75% | player_api_not_found"
+    },
+    {
+      "action": "description_expand",
+      "pass": false,
+      "clicked": false,
+      "reason": "expand_button_not_found"
+    },
+    {
+      "action": "description_expand",
+      "pass": false,
+      "clicked": false,
+      "reason": "expand_button_not_found"
+    },
+    {
+      "action": "description_expand",
+      "pass": true,
+      "clicked": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand"
+    },
+    {
+      "action": "description_link",
+      "pass": true,
+      "clicked": true,
+      "reason": "VERIFIED direct_new_tab target=https://hamstercombocard.com"
+    }
+  ],
+  "entries": [
+    {
+      "action": "LOGIN_STATE",
+      "verified": true,
+      "reason": "logged_in",
+      "ts": 1780899066.596779
+    },
+    {
+      "action": "autoplay_off",
+      "selector": "button.ytp-autonav-toggle",
+      "clicked": false,
+      "verified": false,
+      "reason": "toggle not visible or still ON",
+      "ts": 1780899082.2532687
+    },
+    {
+      "action": "volume_75",
+      "selector": ".ytp-volume-panel slider CDP click",
+      "clicked": false,
+      "verified": false,
+      "reason": "slider=75% target=75% | player_api_not_found",
+      "ts": 1780899088.7894585
+    },
+    {
+      "action": "description_expand",
+      "selector": "tp-yt-paper-button#expand",
+      "clicked": false,
+      "verified": false,
+      "reason": "expand_button_not_found",
+      "ts": 1780899196.1428137
+    },
+    {
+      "action": "description_expand",
+      "selector": "tp-yt-paper-button#expand",
+      "clicked": false,
+      "verified": false,
+      "reason": "expand_button_not_found",
+      "ts": 1780899216.1109412
+    },
+    {
+      "action": "description_expand",
+      "selector": "tp-yt-paper-button#expand",
+      "clicked": true,
+      "verified": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand",
+      "ts": 1780899222.4438934
+    },
+    {
+      "action": "description_link",
+      "selector": "#description a[href] target=https://hamstercombocard.com",
+      "clicked": true,
+      "verified": true,
+      "reason": "VERIFIED direct_new_tab target=https://hamstercombocard.com",
+      "ts": 1780899246.1809676
+    }
+  ]
+}

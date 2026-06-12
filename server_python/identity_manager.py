@@ -14,9 +14,14 @@ GeoIP API: ip-api.com (free, no key needed)
 
 Cache: data/identity_cache/{profile_id[:12]}.json
   - Avoids hitting GeoIP API every session
-  - Cache TTL: 6 hours (proxy session kan change IP)
-"""
+  - Cache TTL: 6 hours (proxy session can change IP)
 
+FIXED:
+  ✅ Bug #1: asyncio.get_event_loop() → asyncio.get_running_loop()
+             (deprecated Python 3.10+, raises DeprecationWarning in 3.12)
+  ✅ Bug #2: apply_to_browser() tab.evaluate wrapped with asyncio.wait_for
+             timeout=10s (was infinite hang on unresponsive tab)
+"""
 from __future__ import annotations
 
 import asyncio
@@ -35,20 +40,13 @@ import aiohttp
 log = logging.getLogger("mmb.identity_manager")
 
 # Cache directory
-_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "identity_cache"
-
-# Cache TTL in seconds (6 hours)
-_CACHE_TTL = 6 * 3600
-
-# GeoIP API — free, no key
-_GEOIP_URL = "http://ip-api.com/json/{ip}?fields=country,countryCode,city,timezone,lat,lon,regionName"
-_GEOIP_TIMEOUT = 8  # seconds
-
+_CACHE_DIR   = Path(__file__).resolve().parent.parent / "data" / "identity_cache"
+_CACHE_TTL   = 6 * 3600     # 6 hours
+_GEOIP_URL   = "http://ip-api.com/json/{ip}?fields=country,countryCode,city,timezone,lat,lon,regionName"
+_GEOIP_TIMEOUT = 8           # seconds
 
 # ── Resolution pools by country code ─────────────────────────────────────────
-# Most common resolutions per region (weighted toward realistic values)
 _RESOLUTION_POOLS: dict[str, list[tuple[int, int]]] = {
-    # English-speaking / Western Europe — mostly 1080p+
     "US": [(1920, 1080), (1366, 768), (1440, 900), (1280, 800), (2560, 1440), (1536, 864)],
     "GB": [(1920, 1080), (1366, 768), (1440, 900), (2560, 1440), (1280, 1024)],
     "CA": [(1920, 1080), (1366, 768), (1440, 900), (2560, 1440), (1280, 800)],
@@ -58,21 +56,17 @@ _RESOLUTION_POOLS: dict[str, list[tuple[int, int]]] = {
     "NL": [(1920, 1080), (1366, 768), (2560, 1440), (1440, 900)],
     "SE": [(1920, 1080), (2560, 1440), (1366, 768), (1440, 900)],
     "NO": [(1920, 1080), (2560, 1440), (1366, 768)],
-    # South Asia — more 768p
     "IN": [(1366, 768), (1920, 1080), (1280, 720), (1024, 768), (1600, 900)],
     "PK": [(1366, 768), (1280, 720), (1024, 768), (1920, 1080)],
     "BD": [(1366, 768), (1024, 768), (1280, 720)],
-    # East Asia
     "JP": [(1920, 1080), (1366, 768), (2560, 1440), (1440, 900)],
     "KR": [(1920, 1080), (2560, 1440), (1366, 768)],
     "CN": [(1920, 1080), (1366, 768), (1600, 900), (1280, 720)],
-    # Default fallback
     "_DEFAULT": [(1920, 1080), (1366, 768), (1440, 900), (1280, 800)],
 }
 
 # ── Language / Accept-Language by country ─────────────────────────────────────
 _LANGUAGE_MAP: dict[str, tuple[str, str]] = {
-    # (navigator.language, Accept-Language header)
     "US": ("en-US", "en-US,en;q=0.9"),
     "GB": ("en-GB", "en-GB,en;q=0.9"),
     "CA": ("en-CA", "en-CA,en;q=0.9,fr-CA;q=0.8"),
@@ -90,7 +84,7 @@ _LANGUAGE_MAP: dict[str, tuple[str, str]] = {
     "_DEFAULT": ("en-US", "en-US,en;q=0.9"),
 }
 
-# ── Timezone by country (primary/most common) ─────────────────────────────────
+# ── Timezone by country ───────────────────────────────────────────────────────
 _TIMEZONE_MAP: dict[str, str] = {
     "US": "America/New_York",
     "GB": "Europe/London",
@@ -110,42 +104,42 @@ _TIMEZONE_MAP: dict[str, str] = {
     "_DEFAULT": "America/New_York",
 }
 
-# US proxy state code → timezone (SmartProxy state-XX in username)
+# US proxy state → timezone
 _US_STATE_TIMEZONE: dict[str, str] = {
-    "ALASKA": "America/Anchorage",
-    "ARIZONA": "America/Phoenix",
-    "CALIFORNIA": "America/Los_Angeles",
-    "COLORADO": "America/Denver",
-    "FLORIDA": "America/New_York",
-    "GEORGIA": "America/New_York",
-    "ILLINOIS": "America/Chicago",
-    "NEWYORK": "America/New_York",
-    "OHIO": "America/New_York",
-    "TEXAS": "America/Chicago",
-    "WASHINGTON": "America/Los_Angeles",
-    "NEVADA": "America/Los_Angeles",
-    "OREGON": "America/Los_Angeles",
-    "MICHIGAN": "America/Detroit",
+    "ALASKA":       "America/Anchorage",
+    "ARIZONA":      "America/Phoenix",
+    "CALIFORNIA":   "America/Los_Angeles",
+    "COLORADO":     "America/Denver",
+    "FLORIDA":      "America/New_York",
+    "GEORGIA":      "America/New_York",
+    "ILLINOIS":     "America/Chicago",
+    "NEWYORK":      "America/New_York",
+    "OHIO":         "America/New_York",
+    "TEXAS":        "America/Chicago",
+    "WASHINGTON":   "America/Los_Angeles",
+    "NEVADA":       "America/Los_Angeles",
+    "OREGON":       "America/Los_Angeles",
+    "MICHIGAN":     "America/Detroit",
     "PENNSYLVANIA": "America/New_York",
-    "VIRGINIA": "America/New_York",
+    "VIRGINIA":     "America/New_York",
     "NORTH_CAROLINA": "America/New_York",
     "TX": "America/Chicago",
     "CA": "America/Los_Angeles",
     "NY": "America/New_York",
 }
 
-# Approximate geo per US state (proxy-aligned custom geolocation)
+# Approximate geo per US state
 _US_STATE_GEO: dict[str, tuple[float, float]] = {
-    "TX": (30.27, -97.74),
-    "CA": (34.05, -118.24),
-    "NY": (40.71, -74.01),
-    "FL": (25.76, -80.19),
-    "WA": (47.61, -122.33),
-    "IL": (41.88, -87.63),
-    "AZ": (33.45, -112.07),
-    "GA": (33.75, -84.39),
-    "NC": (35.23, -80.84),
-    "OH": (39.96, -82.99),
+    "TX":    (30.27, -97.74),
+    "CA":    (34.05, -118.24),
+    "NY":    (40.71, -74.01),
+    "FL":    (25.76, -80.19),
+    "WA":    (47.61, -122.33),
+    "IL":    (41.88, -87.63),
+    "AZ":    (33.45, -112.07),
+    "GA":    (33.75, -84.39),
+    "NC":    (35.23, -80.84),
+    "OH":    (39.96, -82.99),
     "ALASKA": (61.22, -149.90),
 }
 
@@ -155,40 +149,36 @@ _US_STATE_GEO: dict[str, tuple[float, float]] = {
 @dataclass
 class GeoInfo:
     """Raw geo data from GeoIP API."""
-    ip: str = ""
-    country: str = "United States"
-    country_code: str = "US"
-    city: str = "New York"
-    region: str = ""
-    timezone: str = "America/New_York"
-    lat: float = 40.7128
-    lon: float = -74.0060
-    fetched_at: float = field(default_factory=time.time)
+    ip:           str   = ""
+    country:      str   = "United States"
+    country_code: str   = "US"
+    city:         str   = "New York"
+    region:       str   = ""
+    timezone:     str   = "America/New_York"
+    lat:          float = 40.7128
+    lon:          float = -74.0060
+    fetched_at:   float = field(default_factory=time.time)
 
 
 @dataclass
 class ProfileIdentity:
     """Complete browser identity for one profile."""
-    profile_id: str
-    # Geo
-    country_code: str
-    country: str
-    city: str
-    timezone: str
-    lat: float
-    lon: float
-    # Browser
-    language: str           # e.g. "en-US"
-    accept_language: str    # e.g. "en-US,en;q=0.9"
-    screen_width: int
-    screen_height: int
-    # Anti-fingerprint noise (tiny, deterministic per profile)
-    noise_seed: int
-    canvas_noise: float     # 0.001 – 0.008  (sub-pixel canvas noise)
-    webgl_noise: float      # 0.001 – 0.005
-    audio_noise: float      # 0.00001 – 0.0001
-    # Cache metadata
-    cached_at: float = field(default_factory=time.time)
+    profile_id:      str
+    country_code:    str
+    country:         str
+    city:            str
+    timezone:        str
+    lat:             float
+    lon:             float
+    language:        str
+    accept_language: str
+    screen_width:    int
+    screen_height:   int
+    noise_seed:      int
+    canvas_noise:    float
+    webgl_noise:     float
+    audio_noise:     float
+    cached_at:       float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -205,39 +195,39 @@ class IdentityManager:
     Per-profile browser identity sync.
 
     Usage:
-        mgr = IdentityManager(proxy_manager=get_proxy_manager())
+        mgr      = IdentityManager(proxy_manager=get_proxy_manager())
         identity = await mgr.get_identity(profile_id)
         await mgr.apply_to_browser(tab, identity)
     """
 
     def __init__(self, proxy_manager=None) -> None:
-        self._proxy_manager = proxy_manager
-        self._memory_cache: dict[str, ProfileIdentity] = {}
+        self._proxy_manager  = proxy_manager
+        self._memory_cache:  dict[str, ProfileIdentity] = {}
 
     # ── Main API ──────────────────────────────────────────────────────────────
 
-    async def get_identity(self, profile_id: str, custom_resolution: Optional[tuple[int, int]] = None) -> ProfileIdentity:
+    async def get_identity(
+        self,
+        profile_id: str,
+        custom_resolution: Optional[tuple[int, int]] = None,
+    ) -> ProfileIdentity:
         """
         Get complete browser identity for a profile.
         Uses cache if fresh, otherwise fetches GeoIP from proxy IP.
         Always returns a valid identity (falls back to US defaults on error).
-
-        custom_resolution: optional (width, height) tuple. If provided, overrides
-        the country-pool auto-pick. Used when user manually sets resolution at
-        profile creation time.
         """
-        # 1. In-memory cache (same process)
+        # 1. In-memory cache
         if profile_id in self._memory_cache:
             cached = self._memory_cache[profile_id]
-            age = time.time() - cached.cached_at
+            age    = time.time() - cached.cached_at
             if age < _CACHE_TTL:
-                # If custom resolution requested and cached doesn't match, override in place
                 if custom_resolution and (cached.screen_width, cached.screen_height) != custom_resolution:
                     cached.screen_width, cached.screen_height = custom_resolution
                     self._save_cache(profile_id, cached)
-                    log.info(f"[Identity] Memory-cache resolution overridden for {profile_id[:8]} → {custom_resolution[0]}x{custom_resolution[1]}")
+                    log.info("[Identity] Memory-cache resolution overridden for %s → %dx%d",
+                             profile_id[:8], *custom_resolution)
                 else:
-                    log.debug(f"[Identity] Memory cache hit for {profile_id[:8]}")
+                    log.debug("[Identity] Memory cache hit for %s", profile_id[:8])
                 return cached
 
         # 2. Disk cache
@@ -246,39 +236,48 @@ class IdentityManager:
             if custom_resolution and (cached_disk.screen_width, cached_disk.screen_height) != custom_resolution:
                 cached_disk.screen_width, cached_disk.screen_height = custom_resolution
                 self._save_cache(profile_id, cached_disk)
-                log.info(f"[Identity] Disk-cache resolution overridden for {profile_id[:8]} → {custom_resolution[0]}x{custom_resolution[1]}")
+                log.info("[Identity] Disk-cache resolution overridden for %s", profile_id[:8])
             self._memory_cache[profile_id] = cached_disk
-            log.info(f"[Identity] Disk cache hit for {profile_id[:8]} | "
-                     f"country={cached_disk.country_code} tz={cached_disk.timezone}")
+            log.info("[Identity] Disk cache hit for %s | country=%s tz=%s",
+                     profile_id[:8], cached_disk.country_code, cached_disk.timezone)
             return cached_disk
 
         # 3. Fetch from GeoIP
-        geo = await self._fetch_geo(profile_id)
+        geo      = await self._fetch_geo(profile_id)
         identity = self._build_identity(profile_id, geo, custom_resolution=custom_resolution)
         self._save_cache(profile_id, identity)
         self._memory_cache[profile_id] = identity
 
-        log.info(f"[Identity] Built for {profile_id[:8]} | "
-                 f"country={identity.country_code} city={identity.city} "
-                 f"tz={identity.timezone} res={identity.screen_width}x{identity.screen_height} "
-                 f"lang={identity.language}"
-                 + (" [custom-res]" if custom_resolution else ""))
+        log.info(
+            "[Identity] Built for %s | country=%s city=%s tz=%s res=%dx%d lang=%s%s",
+            profile_id[:8], identity.country_code, identity.city,
+            identity.timezone, identity.screen_width, identity.screen_height,
+            identity.language, " [custom-res]" if custom_resolution else "",
+        )
         return identity
 
     async def apply_to_browser(self, tab: Any, identity: ProfileIdentity) -> None:
         """
         Inject identity overrides into a running browser tab via JS.
-        Overrides: timezone, language, screen resolution, canvas/webgl/audio noise.
+        FIX #2: asyncio.wait_for(timeout=10s) prevents infinite hang.
         Non-fatal — logs warning on any error.
         """
         try:
             js = self._build_injection_js(identity)
-            await tab.evaluate(js, return_by_value=True)
-            log.info(f"[Identity] Injected into browser | "
-                     f"tz={identity.timezone} lang={identity.language} "
-                     f"res={identity.screen_width}x{identity.screen_height}")
+            # FIX #2: timeout added
+            await asyncio.wait_for(
+                tab.evaluate(js, return_by_value=True),
+                timeout=10.0,
+            )
+            log.info(
+                "[Identity] Injected into browser | tz=%s lang=%s res=%dx%d",
+                identity.timezone, identity.language,
+                identity.screen_width, identity.screen_height,
+            )
+        except asyncio.TimeoutError:
+            log.warning("[Identity] apply_to_browser timeout (non-fatal)")
         except Exception as e:
-            log.warning(f"[Identity] apply_to_browser error (non-fatal): {e}")
+            log.warning("[Identity] apply_to_browser error (non-fatal): %s", e)
 
     def invalidate(self, profile_id: str) -> None:
         """Force re-fetch on next get_identity() call (use after proxy rotation)."""
@@ -288,10 +287,29 @@ class IdentityManager:
             p.unlink(missing_ok=True)
         except Exception:
             pass
-        log.info(f"[Identity] Cache invalidated for {profile_id[:8]}")
+        log.info("[Identity] Cache invalidated for %s", profile_id[:8])
+
+    def migrate_cache(self, from_id: str, to_id: str) -> None:
+        """Move identity cache when temp create id becomes real MLX profile id."""
+        if not from_id or not to_id or from_id == to_id:
+            return
+        ident = self._memory_cache.pop(from_id, None) or self._load_cache(from_id)
+        if not ident:
+            return
+        ident.profile_id = to_id
+        self._save_cache(to_id, ident)
+        self._memory_cache[to_id] = ident
+        try:
+            self._cache_path(from_id).unlink(missing_ok=True)
+        except Exception:
+            pass
+        log.info(
+            "[Identity] Cache migrated %s → %s (res=%dx%d)",
+            from_id[:8], to_id[:8], ident.screen_width, ident.screen_height,
+        )
 
     def align_with_proxy_hint(self, identity: ProfileIdentity, proxy_cfg: dict) -> ProfileIdentity:
-        """Align timezone/geo with SmartProxy state when GeoIP is unavailable or generic."""
+        """Align timezone/geo with SmartProxy state when GeoIP is unavailable."""
         state = str(proxy_cfg.get("state") or "").upper()
         if not state or state == "US":
             return identity
@@ -301,8 +319,8 @@ class IdentityManager:
         geo = _US_STATE_GEO.get(state)
         if geo:
             identity.lat, identity.lon = geo
-            identity.country_code = "US"
-            identity.country = "United States"
+        identity.country_code = "US"
+        identity.country      = "United States"
         city = proxy_cfg.get("city")
         if city:
             identity.city = str(city)
@@ -313,32 +331,30 @@ class IdentityManager:
     async def _fetch_geo(self, profile_id: str) -> GeoInfo:
         """Fetch geo from proxy IP via ip-api.com. Falls back to US on error."""
         proxy_url: Optional[str] = None
-        proxy_ip: Optional[str] = None
 
-        # Get proxy IP from SmartProxy config
         if self._proxy_manager:
             try:
                 proxy_cfg = self._proxy_manager.get_proxy_config(profile_id)
                 proxy_url = proxy_cfg.get("url", "")
             except Exception as e:
-                log.debug(f"[Identity] Proxy config error: {e}")
+                log.debug("[Identity] Proxy config error: %s", e)
 
-        # First: get actual outbound IP via proxy
         if proxy_url:
             proxy_ip = await self._get_outbound_ip(proxy_url)
+        else:
+            proxy_ip = None
 
         if not proxy_ip:
-            log.warning(f"[Identity] Could not get proxy IP for {profile_id[:8]} — using US defaults")
+            log.warning("[Identity] Could not get proxy IP for %s — using US defaults", profile_id[:8])
             return self._us_default_geo()
 
-        # Now fetch GeoIP for that IP
-        geo = await self._geoip_lookup(proxy_ip)
-        return geo
+        return await self._geoip_lookup(proxy_ip)
 
     async def _get_outbound_ip(self, proxy_url: str) -> Optional[str]:
-        """Get outbound IP as seen from proxy using api.ipify.org."""
-        import asyncio
-
+        """
+        Get outbound IP as seen from proxy.
+        FIX #1: asyncio.get_event_loop() → asyncio.get_running_loop()
+        """
         def _fetch() -> Optional[str]:
             try:
                 import requests
@@ -352,14 +368,18 @@ class IdentityManager:
                     data = r.json()
                     return data.get("query") or data.get("ip", "")
             except Exception as e:
-                log.debug(f"[Identity] _get_outbound_ip error: {e}")
+                log.debug("[Identity] _get_outbound_ip error: %s", e)
             return None
 
         try:
-            loop = asyncio.get_event_loop()
+            # FIX #1: get_running_loop() — correct modern API
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _fetch)
+        except RuntimeError:
+            # No running loop (called from sync context) — run directly
+            return _fetch()
         except Exception as e:
-            log.debug(f"[Identity] _get_outbound_ip executor error: {e}")
+            log.debug("[Identity] _get_outbound_ip executor error: %s", e)
             return None
 
     async def _geoip_lookup(self, ip: str) -> GeoInfo:
@@ -369,11 +389,11 @@ class IdentityManager:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     url,
-                    timeout=aiohttp.ClientTimeout(total=_GEOIP_TIMEOUT)
+                    timeout=aiohttp.ClientTimeout(total=_GEOIP_TIMEOUT),
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
-                        geo = GeoInfo(
+                        geo  = GeoInfo(
                             ip=ip,
                             country=data.get("country", "United States"),
                             country_code=data.get("countryCode", "US"),
@@ -384,67 +404,49 @@ class IdentityManager:
                             lon=float(data.get("lon", -74.0060)),
                             fetched_at=time.time(),
                         )
-                        log.info(f"[Identity] GeoIP: {ip} → {geo.country_code}/{geo.city}/{geo.timezone}")
+                        log.info("[Identity] GeoIP: %s → %s/%s/%s",
+                                 ip, geo.country_code, geo.city, geo.timezone)
                         return geo
         except Exception as e:
-            log.warning(f"[Identity] GeoIP lookup failed for {ip}: {e}")
+            log.warning("[Identity] GeoIP lookup failed for %s: %s", ip, e)
         return self._us_default_geo(ip)
 
     def _us_default_geo(self, ip: str = "") -> GeoInfo:
-        """Return US defaults when geo lookup fails."""
         return GeoInfo(
-            ip=ip,
-            country="United States",
-            country_code="US",
-            city="New York",
-            region="New York",
-            timezone="America/New_York",
-            lat=40.7128,
-            lon=-74.0060,
+            ip=ip, country="United States", country_code="US",
+            city="New York", region="New York",
+            timezone="America/New_York", lat=40.7128, lon=-74.0060,
         )
 
     # ── Identity builder ──────────────────────────────────────────────────────
 
-    def _build_identity(self, profile_id: str, geo: GeoInfo, custom_resolution: Optional[tuple[int, int]] = None) -> ProfileIdentity:
-        """Build complete ProfileIdentity from GeoInfo + profile_id hash.
-
-        custom_resolution: optional (width, height). If set, used instead of
-        country-pool auto-pick. Caller is responsible for validating the tuple.
-        """
-        cc = geo.country_code or "US"
-
-        # Timezone — use API value if set, else country map
+    def _build_identity(
+        self,
+        profile_id: str,
+        geo: GeoInfo,
+        custom_resolution: Optional[tuple[int, int]] = None,
+    ) -> ProfileIdentity:
+        cc       = geo.country_code or "US"
         timezone = geo.timezone or _TIMEZONE_MAP.get(cc, _TIMEZONE_MAP["_DEFAULT"])
-
-        # Language
         lang, accept_lang = _LANGUAGE_MAP.get(cc, _LANGUAGE_MAP["_DEFAULT"])
 
-        # Screen resolution — user override > deterministic per-profile pool
         if custom_resolution:
             screen_w, screen_h = custom_resolution
         else:
             screen_w, screen_h = self._get_resolution(cc, profile_id)
 
-        # Noise seeds — all deterministic from profile_id SHA-256
-        noise_seed = self._noise_seed_int(profile_id)
-        rng = random.Random(noise_seed)
-
+        noise_seed   = self._noise_seed_int(profile_id)
+        rng          = random.Random(noise_seed)
         canvas_noise = round(rng.uniform(0.001, 0.008), 6)
         webgl_noise  = round(rng.uniform(0.001, 0.005), 6)
         audio_noise  = round(rng.uniform(0.00001, 0.0001), 8)
 
         return ProfileIdentity(
             profile_id=profile_id,
-            country_code=cc,
-            country=geo.country,
-            city=geo.city,
-            timezone=timezone,
-            lat=geo.lat,
-            lon=geo.lon,
-            language=lang,
-            accept_language=accept_lang,
-            screen_width=screen_w,
-            screen_height=screen_h,
+            country_code=cc, country=geo.country, city=geo.city,
+            timezone=timezone, lat=geo.lat, lon=geo.lon,
+            language=lang, accept_language=accept_lang,
+            screen_width=screen_w, screen_height=screen_h,
             noise_seed=noise_seed,
             canvas_noise=canvas_noise,
             webgl_noise=webgl_noise,
@@ -453,26 +455,19 @@ class IdentityManager:
         )
 
     def _get_resolution(self, country_code: str, profile_id: str) -> tuple[int, int]:
-        """Deterministic resolution from profile_id hash + country pool."""
-        pool = _RESOLUTION_POOLS.get(country_code, _RESOLUTION_POOLS["_DEFAULT"])
-        # Use bytes 12-14 of SHA-256 for resolution index
+        pool   = _RESOLUTION_POOLS.get(country_code, _RESOLUTION_POOLS["_DEFAULT"])
         digest = hashlib.sha256(profile_id.encode()).hexdigest()
-        idx = int(digest[12:14], 16) % len(pool)
+        idx    = int(digest[12:14], 16) % len(pool)
         return pool[idx]
 
     def _noise_seed_int(self, profile_id: str) -> int:
-        """Deterministic int seed from profile_id SHA-256."""
         digest = hashlib.sha256(profile_id.encode()).hexdigest()
         return int(digest[:8], 16)
 
     # ── JS injection ──────────────────────────────────────────────────────────
 
     def _build_injection_js(self, identity: ProfileIdentity) -> str:
-        """
-        Build JS that overrides browser fingerprint properties.
-        Injected once after tab opens — overrides are consistent for the session.
-        """
-        # Escape strings for JS
+        """Build JS that overrides browser fingerprint properties."""
         tz       = identity.timezone.replace("'", "\\'")
         lang     = identity.language.replace("'", "\\'")
         acc_lang = identity.accept_language.replace("'", "\\'")
@@ -482,97 +477,85 @@ class IdentityManager:
         wg_noise = identity.webgl_noise
         a_noise  = identity.audio_noise
 
-        js = f"""
+        return f"""
 (function() {{
     'use strict';
 
-    // ── 1. Timezone override ────────────────────────────────────────────────
+    // 1. Timezone override
     try {{
-        const OrigDateTimeFormat = Intl.DateTimeFormat;
-        function PatchedDateTimeFormat(locales, options) {{
+        const OrigDTF = Intl.DateTimeFormat;
+        function PatchedDTF(locales, options) {{
             if (!options) options = {{}};
             if (!options.timeZone) options.timeZone = '{tz}';
-            return new OrigDateTimeFormat(locales, options);
+            return new OrigDTF(locales, options);
         }}
-        PatchedDateTimeFormat.prototype = OrigDateTimeFormat.prototype;
-        PatchedDateTimeFormat.supportedLocalesOf = OrigDateTimeFormat.supportedLocalesOf;
-        Object.defineProperty(Intl, 'DateTimeFormat', {{ value: PatchedDateTimeFormat, writable: false }});
+        PatchedDTF.prototype = OrigDTF.prototype;
+        PatchedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf;
+        Object.defineProperty(Intl, 'DateTimeFormat', {{ value: PatchedDTF, writable: false }});
     }} catch(e) {{}}
 
-    // ── 2. Language override ────────────────────────────────────────────────
+    // 2. Language override
     try {{
-        Object.defineProperty(navigator, 'language', {{
-            get: function() {{ return '{lang}'; }},
-            configurable: true
-        }});
-        Object.defineProperty(navigator, 'languages', {{
-            get: function() {{ return ['{lang}', 'en']; }},
-            configurable: true
-        }});
+        Object.defineProperty(navigator, 'language',  {{ get: () => '{lang}',     configurable: true }});
+        Object.defineProperty(navigator, 'languages', {{ get: () => ['{lang}', 'en'], configurable: true }});
     }} catch(e) {{}}
 
-    // ── 3. Screen resolution override ───────────────────────────────────────
+    // 3. Screen resolution override
     try {{
-        Object.defineProperty(screen, 'width',       {{ get: function() {{ return {w}; }}, configurable: true }});
-        Object.defineProperty(screen, 'height',      {{ get: function() {{ return {h}; }}, configurable: true }});
-        Object.defineProperty(screen, 'availWidth',  {{ get: function() {{ return {w}; }}, configurable: true }});
-        Object.defineProperty(screen, 'availHeight', {{ get: function() {{ return {h} - 40; }}, configurable: true }});
-        Object.defineProperty(window, 'innerWidth',  {{ get: function() {{ return {w}; }}, configurable: true }});
-        Object.defineProperty(window, 'innerHeight', {{ get: function() {{ return {h} - 80; }}, configurable: true }});
+        Object.defineProperty(screen, 'width',       {{ get: () => {w},      configurable: true }});
+        Object.defineProperty(screen, 'height',      {{ get: () => {h},      configurable: true }});
+        Object.defineProperty(screen, 'availWidth',  {{ get: () => {w},      configurable: true }});
+        Object.defineProperty(screen, 'availHeight', {{ get: () => {h} - 40, configurable: true }});
+        Object.defineProperty(window, 'innerWidth',  {{ get: () => {w},      configurable: true }});
+        Object.defineProperty(window, 'innerHeight', {{ get: () => {h} - 80, configurable: true }});
     }} catch(e) {{}}
 
-    // ── 4. Canvas noise (sub-pixel, invisible to human) ────────────────────
+    // 4. Canvas noise (sub-pixel, invisible to human)
     try {{
-        const origGetContext = HTMLCanvasElement.prototype.getContext;
+        const origGetCtx = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function(type, attrs) {{
-            var ctx = origGetContext.call(this, type, attrs);
+            const ctx = origGetCtx.call(this, type, attrs);
             if (!ctx || type !== '2d') return ctx;
-            var origGetImageData = ctx.getImageData.bind(ctx);
+            const origGID = ctx.getImageData.bind(ctx);
             ctx.getImageData = function(x, y, w, h) {{
-                var imageData = origGetImageData(x, y, w, h);
-                var noise = {c_noise};
-                for (var i = 0; i < imageData.data.length; i += 4) {{
-                    imageData.data[i]   = Math.min(255, imageData.data[i]   + Math.floor(noise * 255 * Math.random()));
-                    imageData.data[i+1] = Math.min(255, imageData.data[i+1] + Math.floor(noise * 255 * Math.random()));
-                    imageData.data[i+2] = Math.min(255, imageData.data[i+2] + Math.floor(noise * 255 * Math.random()));
+                const id    = origGID(x, y, w, h);
+                const noise = {c_noise};
+                for (let i = 0; i < id.data.length; i += 4) {{
+                    id.data[i]   = Math.min(255, id.data[i]   + Math.floor(noise * 255 * Math.random()));
+                    id.data[i+1] = Math.min(255, id.data[i+1] + Math.floor(noise * 255 * Math.random()));
+                    id.data[i+2] = Math.min(255, id.data[i+2] + Math.floor(noise * 255 * Math.random()));
                 }}
-                return imageData;
+                return id;
             }};
             return ctx;
         }};
     }} catch(e) {{}}
 
-    // ── 5. WebGL noise ──────────────────────────────────────────────────────
+    // 5. WebGL noise
     try {{
-        var origGetParam = WebGLRenderingContext.prototype.getParameter;
+        const origGP = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function(param) {{
-            var result = origGetParam.call(this, param);
-            if (typeof result === 'number') {{
-                result = result + (Math.random() - 0.5) * {wg_noise};
-            }}
-            return result;
+            const r = origGP.call(this, param);
+            return typeof r === 'number' ? r + (Math.random() - 0.5) * {wg_noise} : r;
         }};
     }} catch(e) {{}}
 
-    // ── 6. Audio noise ──────────────────────────────────────────────────────
+    // 6. Audio noise
     try {{
-        var origCreateAnalyser = AudioContext.prototype.createAnalyser;
+        const origCA = AudioContext.prototype.createAnalyser;
         AudioContext.prototype.createAnalyser = function() {{
-            var analyser = origCreateAnalyser.call(this);
-            var origGetFloatFreq = analyser.getFloatFrequencyData.bind(analyser);
-            analyser.getFloatFrequencyData = function(arr) {{
-                origGetFloatFreq(arr);
-                for (var i = 0; i < arr.length; i++) {{
-                    arr[i] += (Math.random() - 0.5) * {a_noise};
-                }}
+            const a    = origCA.call(this);
+            const orig = a.getFloatFrequencyData.bind(a);
+            a.getFloatFrequencyData = function(arr) {{
+                orig(arr);
+                for (let i = 0; i < arr.length; i++) arr[i] += (Math.random() - 0.5) * {a_noise};
             }};
-            return analyser;
+            return a;
         }};
     }} catch(e) {{}}
 
 }})();
 """.strip()
-        return js
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 
@@ -581,24 +564,22 @@ class IdentityManager:
         return _CACHE_DIR / f"{safe_id}.json"
 
     def _load_cache(self, profile_id: str) -> Optional[ProfileIdentity]:
-        """Load identity from disk cache if fresh enough."""
         p = self._cache_path(profile_id)
         try:
             if p.exists():
                 with open(p, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 identity = ProfileIdentity.from_dict(data)
-                age = time.time() - identity.cached_at
+                age      = time.time() - identity.cached_at
                 if age < _CACHE_TTL:
                     return identity
-                log.debug(f"[Identity] Cache expired for {profile_id[:8]} (age={age:.0f}s)")
+                log.debug("[Identity] Cache expired for %s (age=%.0fs)", profile_id[:8], age)
         except Exception as e:
-            log.debug(f"[Identity] Cache load error: {e}")
+            log.debug("[Identity] Cache load error: %s", e)
         return None
 
     def _save_cache(self, profile_id: str, identity: ProfileIdentity) -> None:
-        """Atomic save to disk cache."""
-        p = self._cache_path(profile_id)
+        p   = self._cache_path(profile_id)
         tmp = p.with_suffix(".tmp")
         try:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -606,7 +587,7 @@ class IdentityManager:
                 json.dump(identity.to_dict(), f, indent=2)
             tmp.replace(p)
         except Exception as e:
-            log.warning(f"[Identity] Cache save error: {e}")
+            log.warning("[Identity] Cache save error: %s", e)
             try:
                 tmp.unlink(missing_ok=True)
             except Exception:

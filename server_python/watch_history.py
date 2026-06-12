@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -127,15 +127,51 @@ def _get_watched_list(data: dict) -> list[dict]:
     return result
 
 
-def has_watched(profile_id: str, video_id: str) -> bool:
-    """
-    Check if this profile has already watched video_id.
-    Returns True if yes (should skip), False if not watched yet.
-    """
+def _watched_on_same_day(watched_at_ms: int, now_ms: Optional[int] = None) -> bool:
+    """True if watched_at falls on the same local calendar day as now."""
+    if watched_at_ms <= 0:
+        return False
+    now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    w_day = datetime.fromtimestamp(watched_at_ms / 1000).date()
+    n_day = datetime.fromtimestamp(now_ms / 1000).date()
+    return w_day == n_day
+
+
+def has_watched_today(profile_id: str, video_id: str, now_ms: Optional[int] = None) -> bool:
+    """Profile ne aaj ye video dekhi? Kal dekhi ho to False."""
     if not profile_id or not video_id:
         return False
     data = _load_raw(profile_id)
-    return video_id in _get_watched_ids(data)
+    for entry in _get_watched_list(data):
+        if entry.get("videoId") == video_id:
+            if _watched_on_same_day(int(entry.get("watchedAt") or 0), now_ms):
+                return True
+    return False
+
+
+def should_skip_video(
+    profile_id: str,
+    video_id: str,
+    allow_same_day_repeat: bool = False,
+    now_ms: Optional[int] = None,
+) -> bool:
+    """
+    Skip rule for scheduler/shuffle:
+    - Default: same profile + same video aaj dubara mat chalao
+    - allow_same_day_repeat=True: aaj bhi dubara chal sakti hai
+    - Kal watched ho → aaj nahi skip (next day OK)
+    """
+    if allow_same_day_repeat or not profile_id or not video_id:
+        return False
+    return has_watched_today(profile_id, video_id, now_ms)
+
+
+def has_watched(profile_id: str, video_id: str) -> bool:
+    """
+    Legacy name — ab same-day check (ACTIONS_HANDOFF: aaj nahi dubara).
+    Kal ki entry skip nahi karegi.
+    """
+    return has_watched_today(profile_id, video_id)
 
 
 def get_watched(profile_id: str) -> set[str]:

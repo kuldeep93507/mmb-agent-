@@ -129,7 +129,7 @@ function getTimezoneFromProxy(state: string, city: string): string {
 }
 
 export default function ProfileSettings({ profile, onClose, onRenewProxy }: ProfileSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'settings' | 'details' | 'history'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'details' | 'history'>('details');
   const [config, setConfig] = useState<ProfileConfig>(() => loadProfileConfig(profile.id));
   const [saved, setSaved] = useState(false);
   const [historyRows, setHistoryRows] = useState<{ videoTitle: string; watchedAt: number; watchPercent?: number }[]>([]);
@@ -394,10 +394,6 @@ export default function ProfileSettings({ profile, onClose, onRenewProxy }: Prof
 
         {/* Tabs */}
         <div className="flex border-b border-gray-800 px-6">
-          <button onClick={() => setActiveTab('settings')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${activeTab === 'settings' ? 'border-red-500 text-red-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
-            ⚙️ Settings
-          </button>
           <button onClick={() => setActiveTab('details')}
             className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${activeTab === 'details' ? 'border-red-500 text-red-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
             🔍 Profile Details

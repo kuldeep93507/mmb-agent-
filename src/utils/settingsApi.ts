@@ -31,6 +31,15 @@ export interface AppSettings {
   nvidiaApiKey: string;
   nvidiaModel: string;
   aiVisionEnabled: boolean | string;
+  // AI Tiered Models (haiku=simple / sonnet=balanced / opus=powerful)
+  aiTieredModelsEnabled?: boolean | string;
+  aiModelHaiku?: string;
+  aiModelSonnet?: string;
+  aiModelOpus?: string;
+  aiModelDefault?: string;
+  // AI feature toggles (save credits — turn off when not needed)
+  aiCommentQualityEnabled?: boolean | string;
+  aiProfileMemoryEnabled?: boolean | string;
   // YT Agent 24/7
   ytMaxTotalAgents: string;
   ytVideosPerSessionMin: string;
@@ -64,6 +73,8 @@ export interface AppSettings {
   // Window / display resolution
   windowWidth: string;
   windowHeight: string;
+  /** Temporarily disabled traffic sources (project-wide) — e.g. ["google","bing"] */
+  disabledTrafficSources?: string[];
   // High RPM/CPM Cookie Warmup
   highRpmCookieWarmupEnabled: boolean | string;
   warmupVisitCountMin: string;
@@ -248,7 +259,12 @@ export async function fetchMultiloginToken(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
-    return await res.json();
+    const data = await res.json();
+    return {
+      ok: Boolean(data.success ?? data.ok),
+      message: data.message || (data.success ? 'Token saved' : 'Fetch failed'),
+      tokenPreview: data.tokenPreview,
+    };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }

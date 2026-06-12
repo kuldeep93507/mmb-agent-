@@ -1,0 +1,18 @@
+{
+  "profile_id": "a8689fbd-f580-477c-841b-6f110f9e515e",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Austin",
+  "timezone": "America/Chicago",
+  "lat": 30.3773,
+  "lon": -97.71,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1166245960,
+  "canvas_noise": 0.001687,
+  "webgl_noise": 0.001531,
+  "audio_noise": 8.449e-05,
+  "cached_at": 1781054034.131756
+}

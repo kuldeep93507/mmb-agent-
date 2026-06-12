@@ -1,0 +1,18 @@
+{
+  "profile_id": "22003228-01ac-4397-ba17-27772eeb493f",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Seattle",
+  "timezone": "America/Los_Angeles",
+  "lat": 47.6062,
+  "lon": -122.332,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1536,
+  "screen_height": 864,
+  "noise_seed": 2431858646,
+  "canvas_noise": 0.001952,
+  "webgl_noise": 0.001378,
+  "audio_noise": 6.366e-05,
+  "cached_at": 1780914086.4135923
+}

@@ -1,17 +1,21 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  ThumbsUp, Link, Play,
-  RefreshCw, XCircle, Clock, Zap, Plus, Trash2,
-  ChevronDown, ChevronUp, AlertTriangle, Shuffle, Tv,
-  Search, SkipForward, Film, BarChart2, Mail,
+  ThumbsUp, Play,
+  RefreshCw, XCircle, Clock, Zap,
+  ChevronDown, AlertTriangle, Film, BarChart2, Mail,
 } from 'lucide-react';
+import ChannelVideoPicker, { type PickableVideo } from './shared/ChannelVideoPicker';
+import { videoTargetsFromPickable, pickableFromVideoTargets } from '../utils/pickableVideoAdapters';
 import type { Profile } from '../types';
-import type { Channel, Video } from '../store/useChannelStore';
+import type { AutoSync, Channel, ChannelStatus, Video } from '../store/useChannelStore';
 import { getGmailProfileIds, getAllGmailProfiles } from '../utils/gmailProfileStore';
 import {
   startEngagement, fetchEngagementStatus, cancelEngagement, clearEngagementJobs,
   type EngagementQueueStatus, type EngagementJobStatus, type VideoTarget,
 } from '../utils/engagementApi';
+import { useDisabledTrafficSources } from '../hooks/useDisabledTrafficSources';
+import { AdControlSettings } from './shared/AdControlSettings';
+import { TRAFFIC_SOURCES } from '../utils/runSettingsShared';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function rand(min: number, max: number) {
@@ -37,7 +41,24 @@ const STATUS_CFG: Record<string, { label: string; color: string; dot: string }> 
 
 const QUALITY_OPTIONS = ['auto', '144p', '240p', '360p', '480p', '720p', '1080p'] as const;
 type VideoQuality = typeof QUALITY_OPTIONS[number];
-type Source = 'notification' | 'search' | 'direct' | 'homepage';
+type Source =
+  | 'notification'
+  | 'search'
+  | 'direct'
+  | 'homepage'
+  | 'google'
+  | 'bing'
+  | 'channel_discovery';
+
+const ENGAGEMENT_SOURCE_OPTIONS: { id: Source; label: string }[] = [
+  { id: 'notification', label: '🔔 Notification' },
+  { id: 'search', label: '🔍 YouTube' },
+  { id: 'homepage', label: '🏠 Homepage' },
+  { id: 'google', label: '🌐 Google' },
+  { id: 'bing', label: '🔷 Bing' },
+  { id: 'channel_discovery', label: '📺 Channel Disc' },
+  { id: 'direct', label: '🔗 Direct' },
+];
 
 interface ProfileOverride {
   source:           Source;
@@ -46,21 +67,26 @@ interface ProfileOverride {
   subscribe:        boolean;
   bell:             boolean;
   comment:          boolean;
+  commentLike:      boolean;
   descriptionLinks: boolean;
   // Per-profile settings (user decides from tool — Rule: jo tool se set karo wahi use ho)
   quality:          VideoQuality;
-  watchPct:         number;   // exact watch % (e.g. 80)
-  volumePct:        number;   // volume level per profile
+  watchMin:         number;   // per-profile watch % RANGE min (e.g. 80)
+  watchMax:         number;   // per-profile watch % RANGE max (e.g. 100)
+  volMin:           number;   // per-profile volume % RANGE min
+  volMax:           number;   // per-profile volume % RANGE max
   seekEnabled:      boolean;
   adSkip:           boolean;
+  adClick:          boolean;
 }
 
-const ACTION_COLS: { key: 'like' | 'dislike' | 'subscribe' | 'bell' | 'comment' | 'descriptionLinks'; emoji: string; label: string; color: string }[] = [
+const ACTION_COLS: { key: 'like' | 'dislike' | 'subscribe' | 'bell' | 'comment' | 'commentLike' | 'descriptionLinks'; emoji: string; label: string; color: string }[] = [
   { key: 'like',             emoji: '👍', label: 'Like',    color: 'text-green-400'  },
   { key: 'dislike',          emoji: '👎', label: 'Dislike', color: 'text-red-400'    },
   { key: 'subscribe',        emoji: '📺', label: 'Sub',     color: 'text-blue-400'   },
   { key: 'bell',             emoji: '🔔', label: 'Bell',    color: 'text-yellow-400' },
   { key: 'comment',          emoji: '💬', label: 'Comment', color: 'text-purple-400' },
+  { key: 'commentLike',      emoji: '💬👍', label: 'CmtLike', color: 'text-pink-400' },
   { key: 'descriptionLinks', emoji: '🔗', label: 'Links',   color: 'text-orange-400' },
 ];
 
@@ -78,13 +104,27 @@ type SettingsTab = 'engagement' | 'playback' | 'traffic';
 type ControlMode = 'same' | 'perprofile';
 
 interface Props {
-  profiles:      Profile[];
-  channels?:     Channel[];
-  getVideos?:    (channelId: number, filter?: string) => Video[];
-  setActiveTab?: (tab: string) => void;
+  profiles:       Profile[];
+  channels?:      Channel[];
+  getVideos?:     (channelId: number, filter?: string) => Video[];
+  addManualVideo?: (url: string, title: string) => Video | null;
+  addChannel?:    (channelId: string, autoSync?: AutoSync, status?: ChannelStatus) => Promise<Channel | null>;
+  setActiveTab?:  (tab: string) => void;
 }
 
-export default function EngagementPage({ profiles, channels = [], getVideos, setActiveTab }: Props) {
+export default function EngagementPage({
+  profiles,
+  channels = [],
+  getVideos,
+  addManualVideo,
+  addChannel,
+  setActiveTab,
+}: Props) {
+  const { isEnabled, disabledList } = useDisabledTrafficSources();
+  const enabledSourceOptions = useMemo(
+    () => ENGAGEMENT_SOURCE_OPTIONS.filter((s) => isEnabled(s.id)),
+    [isEnabled, disabledList],
+  );
 
   // ── UI State ─────────────────────────────────────────────────────────────────
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('engagement');
@@ -93,9 +133,6 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
 
   // ── Video Queue ──────────────────────────────────────────────────────────────
   const [videoQueue, setVideoQueue]         = useState<VideoTarget[]>([]);
-  const [pickerOpen, setPickerOpen]         = useState(false);
-  const [pickerChannelId, setPickerChannelId] = useState<number | null>(null);
-  const [pickerSearch, setPickerSearch]     = useState('');
 
   // ── Global % settings ────────────────────────────────────────────────────────
   const [likePct,            setLikePct]            = useState(70);
@@ -107,21 +144,31 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
   const [descDefault,        setDescDefault]        = useState(false);
   const [descExpandEnabled,  setDescExpandEnabled]  = useState(true);
   const [volumePct,          setVolumePct]          = useState(75);
+  const [volumeMin,          setVolumeMin]          = useState(10);
+  const [volumeMax,          setVolumeMax]          = useState(100);
   const [seekEnabled,        setSeekEnabled]        = useState(true);
   const [seekDirection,      setSeekDirection]      = useState<'forward' | 'backward' | 'both'>('forward');
   const [pauseProbabilityPct,setPauseProbabilityPct]= useState(12);
   const [watchPctMin,        setWatchPctMin]        = useState(80);
   const [watchPctMax,        setWatchPctMax]        = useState(100);
   const [adSkipEnabled,      setAdSkipEnabled]      = useState(true);
-  const [adSkipDelaySec,     setAdSkipDelaySec]     = useState(10);
-  const [adSkipDelayMaxSec,  setAdSkipDelayMaxSec]  = useState(14);
+  const [adSkipMaxSec,       setAdSkipMaxSec]       = useState(60);
+  const [midRollAdWaitSec,   setMidRollAdWaitSec]   = useState(10);
+  const [adClickEnabled,     setAdClickEnabled]     = useState(false);
+  const [adClickDelayMinSec, setAdClickDelayMinSec] = useState(10);
+  const [adClickDelayMaxSec, setAdClickDelayMaxSec] = useState(15);
+  const [adClickVisitSec,    setAdClickVisitSec]    = useState(20);
+  const [videosPerProfile,   setVideosPerProfile]   = useState(1);
   const [videoQuality,       setVideoQuality]       = useState<VideoQuality>('auto');
   const [activeLaunchLimit,  setActiveLaunchLimit]  = useState(20);
   const [startGapMinSec,     setStartGapMinSec]     = useState(10);
   const [startGapMaxSec,     setStartGapMaxSec]     = useState(25);
   const [srcNotif,           setSrcNotif]           = useState(20);
   const [srcSearch,          setSrcSearch]          = useState(30);
-  const [srcHome,            setSrcHome]            = useState(30);
+  const [srcHome,            setSrcHome]            = useState(20);
+  const [srcGoogle,          setSrcGoogle]          = useState(12);
+  const [srcBing,            setSrcBing]            = useState(8);
+  const [srcChannelDisc,     setSrcChannelDisc]     = useState(10);
   const [captionsEnabled,    setCaptionsEnabled]    = useState(false);
   const [playbackSpeed,      setPlaybackSpeed]      = useState('1x');
   const [naturalScrollCurves,setNaturalScrollCurves]= useState(true);
@@ -137,13 +184,13 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
   const [launching,    setLaunching]    = useState(false);
   const [launchMsg,    setLaunchMsg]    = useState('');
   const [queueExpanded, setQueueExpanded] = useState(false);
+  const pendingPresetRef = useRef<PresetName | null>(null);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const gmailIds      = getGmailProfileIds();
   const gmailMeta     = getAllGmailProfiles();
   const gmailProfiles = profiles.filter(p => gmailIds.includes(p.id));
-  const activeChannels = useMemo(() => channels.filter(c => c.status === 'active'), [channels]);
-  const srcDirect = Math.max(0, 100 - srcNotif - srcSearch - srcHome);
+  const srcDirect = Math.max(0, 100 - srcNotif - srcSearch - srcHome - srcGoogle - srcBing - srcChannelDisc);
 
   // ── Preset apply ─────────────────────────────────────────────────────────────
   function applyPreset(name: PresetName) {
@@ -156,9 +203,16 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     setBellPct(p.bell);
     setCommentPct(p.comment);
     setCommentLikePct(p.commentLike);
-    // Refresh per-profile toggles from new percentages
-    setTimeout(() => applyGlobalPct(), 0);
+    pendingPresetRef.current = name;
   }
+
+  useEffect(() => {
+    if (pendingPresetRef.current && pendingPresetRef.current !== 'custom') {
+      pendingPresetRef.current = null;
+      applyGlobalPct();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [likePct, dislikePct, subscribePct, bellPct, commentPct, commentLikePct]);
 
   /** Deterministic pct slot — 70% like + 1 profile => like ON (no silent random OFF). */
   function pctSlotOn(pct: number, profileIndex: number, profileCount: number): boolean {
@@ -173,11 +227,21 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
   // ── Helper: build a default override for a profile ───────────────────────────
   function makeDefault(profileIndex = 0, profileCount = 1): ProfileOverride {
     const roll = rand(1, 100);
-    const source: Source =
-      roll <= srcNotif                          ? 'notification' :
-      roll <= srcNotif + srcSearch              ? 'search' :
-      roll <= srcNotif + srcSearch + srcHome    ? 'homepage' :
-      'direct';
+    const source: Source = (() => {
+      let r = roll;
+      if (r <= srcNotif)  return 'notification';
+      r -= srcNotif;
+      if (r <= srcSearch) return 'search';
+      r -= srcSearch;
+      if (r <= srcHome)   return 'homepage';
+      r -= srcHome;
+      if (r <= srcGoogle) return 'google';
+      r -= srcGoogle;
+      if (r <= srcBing)   return 'bing';
+      r -= srcBing;
+      if (r <= srcChannelDisc) return 'channel_discovery';
+      return 'direct';
+    })();
     const count = Math.max(1, profileCount);
     return {
       source,
@@ -186,13 +250,17 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
       subscribe:        pctSlotOn(subscribePct, profileIndex, count),
       bell:             pctSlotOn(bellPct, profileIndex, count),
       comment:          pctSlotOn(commentPct, profileIndex, count),
+      commentLike:      pctSlotOn(commentLikePct, profileIndex, count),
       descriptionLinks: descDefault,
       // Per-profile defaults from global settings (user can override per-profile)
       quality:     videoQuality,
-      watchPct:    rand(watchPctMin, watchPctMax),
-      volumePct:   volumePct,
+      watchMin:    watchPctMin,
+      watchMax:    watchPctMax,
+      volMin:      volumeMin,
+      volMax:      volumeMax,
       seekEnabled: seekEnabled,
       adSkip:      adSkipEnabled,
+      adClick:     adClickEnabled,
     };
   }
 
@@ -252,28 +320,15 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
     return sel.length > 0 && sel.every(p => profileOverrides[p.id]?.[key] ?? false);
   }
 
-  // ── Picker logic ─────────────────────────────────────────────────────────────
-  const pickerVideos = useMemo(() => {
-    if (!pickerChannelId || !getVideos) return [];
-    const vids = getVideos(pickerChannelId);
-    const q = pickerSearch.trim().toLowerCase();
-    return q ? vids.filter(v => v.title.toLowerCase().includes(q)) : vids;
-  }, [pickerChannelId, getVideos, pickerSearch]);
+  const syncPickableVideos = (videos: PickableVideo[]) => {
+    setVideoQueue(prev => videoTargetsFromPickable(videos, prev));
+  };
 
-  function addToQueue(video: Video, channelName: string) {
-    setVideoQueue(prev => [...prev, { url: video.url, title: video.title, channelName }]);
-    setPickerOpen(false);
-    setPickerChannelId(null);
-    setPickerSearch('');
-  }
-
-  function shuffleAdd() {
-    if (!pickerChannelId || !getVideos) return;
-    const vids = getVideos(pickerChannelId);
-    if (!vids.length) return;
-    const ch = activeChannels.find(c => c.id === pickerChannelId);
-    addToQueue(vids[Math.floor(Math.random() * vids.length)], ch?.channel_name ?? '');
-  }
+  const setVideoTraffic = (index: number, trafficSource: string) => {
+    setVideoQueue(prev => prev.map((v, i) => (
+      i === index ? { ...v, trafficSource: trafficSource || undefined } : v
+    )));
+  };
 
   // ── Poll queue ────────────────────────────────────────────────────────────────
   const pollStatus = useCallback(async () => {
@@ -302,12 +357,13 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
         ov.comment && templates.length > 0
           ? templates[rand(0, templates.length - 1)].text
           : '';
-      // Rule: jo tool se set karo wahi use ho — per-profile values, not global random
-      const profileWatchPct = ov.watchPct ?? rand(watchPctMin, watchPctMax);
+      // Rule: jo tool se set karo wahi use ho — per-profile RANGE, random within it
+      const profileWatchPct = rand(ov.watchMin ?? watchPctMin, ov.watchMax ?? watchPctMax);
       const profileQuality  = ov.quality   ?? videoQuality;
-      const profileVolume   = ov.volumePct ?? volumePct;
+      const profileVolume   = rand(ov.volMin ?? volumeMin, ov.volMax ?? volumeMax);
       const profileSeek     = ov.seekEnabled ?? seekEnabled;
       const profileAdSkip   = ov.adSkip    ?? adSkipEnabled;
+      const profileAdClick  = ov.adClick   ?? adClickEnabled;
       if (i > 0) cumulativeDelayMs += rand(startGapMinSec, Math.max(startGapMinSec, startGapMaxSec)) * 1000;
       const delayMs = cumulativeDelayMs;
       return {
@@ -326,13 +382,22 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
           descriptionLinks:  ov.descriptionLinks,
           descriptionExpand: descExpandEnabled,
           volumePct:         profileVolume,
-          commentLikePct,
+          volumeMin:         volumeMin,
+          volumeMax:         volumeMax,
+          commentLikeEnabled: ov.commentLike,
+          commentLikePct:     ov.commentLike ? commentLikePct : 0,
           seekEnabled:       profileSeek,
           seekDirection,
           pauseProbability:  pauseProbabilityPct / 100,
           adSkipEnabled:     profileAdSkip,
-          adSkipDelaySec,
-          adSkipDelayMaxSec,
+          adClick:           profileAdClick,
+          adSkipDelaySec:    adSkipMaxSec,
+          adSkipDelayMaxSec: adSkipMaxSec,
+          adSkipMaxSec,
+          adClickEnabled:    profileAdClick,
+          adClickDelayMinSec,
+          adClickDelayMaxSec,
+          adClickVisitSec,
           videoQuality:      profileQuality,
           // Gmail profiles on this page — trust login, backend must not DOM-detect
           gmailLoggedIn:     true,
@@ -347,15 +412,20 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
           naturalScrollCurves:     naturalScrollCurves,
           uniqueTypingPersonality: uniqueTypingPersonality,
         },
-        videos:   videoQueue,
+        videos:   videoQueue.slice(0, Math.max(1, videosPerProfile)),
         watchPct: profileWatchPct,
+        adClickEnabled: profileAdClick,
+        adSkipMaxSec,
+        adClickVisitSec,
+        adClickDelayMinSec,
+        adClickDelayMaxSec,
       };
     });
   }
 
   async function handleLaunch() {
-    if (!videoQueue.length)  { setLaunchMsg('❌ Pehle koi video add karo'); return; }
-    if (!selectedIds.size)   { setLaunchMsg('❌ Koi Gmail profile select nahi'); return; }
+    if (!videoQueue.length)  { setLaunchMsg('❌ Add at least one video first'); return; }
+    if (!selectedIds.size)   { setLaunchMsg('❌ Select at least one Gmail profile'); return; }
     setLaunching(true);
     setLaunchMsg('');
     try {
@@ -363,8 +433,13 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
         profiles: buildProfiles(),
         watchPct: rand(watchPctMin, watchPctMax),
         adSkipEnabled,
-        adSkipDelaySec,
-        adSkipDelayMaxSec,
+        adSkipDelaySec: adSkipMaxSec,
+        adSkipDelayMaxSec: adSkipMaxSec,
+        adSkipMaxSec,
+        adClickEnabled,
+        adClickDelayMinSec,
+        adClickDelayMaxSec,
+        adClickVisitSec,
         videoQuality,
         maxConcurrent: Math.max(1, activeLaunchLimit),
       });
@@ -394,13 +469,22 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
 
         {/* ═══ HEADER ═══ */}
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Zap size={22} className="text-yellow-400" /> Engagement Engine
-            </h1>
-            <p className="text-gray-500 text-sm mt-1">
-              Gmail profiles → YouTube → like / comment / subscribe — human-like staggered timing
-            </p>
+          <div className="flex items-center gap-3">
+            <div style={{
+              width: 44, height: 44, borderRadius: 13, flexShrink: 0,
+              background: 'var(--mmb-grad)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 8px 22px var(--mmb-accent-glow)',
+            }}>
+              <Zap size={22} color="#fff" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold flex items-center gap-2">
+                <span className="mmb-gradient-text">Engagement Engine</span>
+              </h1>
+              <p className="text-gray-500 text-sm mt-0.5">
+                Gmail profiles → channel link paste karo → har profile ka apna action pattern chalega
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {setActiveTab && (
@@ -418,125 +502,80 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
           </div>
         </div>
 
-        {/* ═══ VIDEO QUEUE ═══ */}
+        {/* ═══ VIDEO QUEUE — multi-channel picker ═══ */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-white font-semibold text-sm flex items-center gap-2">
-              <Film size={15} className="text-red-400" /> Video Queue
-              {videoQueue.length > 0 && <span className="text-xs text-gray-500 font-normal">— {videoQueue.length} video{videoQueue.length !== 1 ? 's' : ''}</span>}
-            </h2>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setPickerOpen(o => !o)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${pickerOpen ? 'bg-red-900/30 border-red-600/40 text-red-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'}`}>
-                <Plus size={12} /> Add Video {pickerOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-              </button>
-              {videoQueue.length > 0 && (
-                <button onClick={() => setVideoQueue([])} className="text-xs text-gray-600 hover:text-red-400 transition-all">Clear all</button>
-              )}
-            </div>
-          </div>
-
-          {/* Queue chips horizontal */}
+          <h2 className="text-white font-semibold text-sm flex items-center gap-2">
+            <Film size={15} className="text-red-400" /> Video Queue
+            {videoQueue.length > 0 && (
+              <span className="text-xs text-gray-500 font-normal">— {videoQueue.length} video{videoQueue.length !== 1 ? 's' : ''}</span>
+            )}
+          </h2>
+          {getVideos ? (
+            <ChannelVideoPicker
+              channels={channels}
+              getVideos={getVideos}
+              videos={pickableFromVideoTargets(videoQueue)}
+              onChange={syncPickableVideos}
+            />
+          ) : (
+            <p className="text-xs text-gray-600">Channels load ho rahe hain…</p>
+          )}
           {videoQueue.length > 0 && (
-            <div className="flex gap-3 overflow-x-auto pb-1">
-              {videoQueue.map((v, idx) => {
-                const videoId = v.url.match(/[?&]v=([^&]+)/)?.[1] ?? '';
-                return (
-                  <div key={idx} className="flex items-center gap-2 px-3 py-2 bg-gray-800/70 border border-gray-700/60 rounded-xl min-w-[240px] flex-shrink-0 hover:border-gray-600 transition-all">
-                    <span className="text-xs text-gray-600 font-mono w-4 flex-shrink-0">#{idx + 1}</span>
-                    {videoId && <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" className="w-14 h-8 object-cover rounded flex-shrink-0" />}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs text-white font-medium truncate">{v.title || v.url}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{v.channelName || '—'}</p>
-                    </div>
-                    <button onClick={() => setVideoQueue(prev => prev.filter((_, i) => i !== idx))} className="text-gray-600 hover:text-red-400 flex-shrink-0">
-                      <XCircle size={13} />
-                    </button>
-                  </div>
-                );
-              })}
-              {/* Add placeholder */}
-              <div onClick={() => setPickerOpen(true)} className="flex items-center justify-center px-6 py-2 border-2 border-dashed border-gray-700/60 rounded-xl min-w-[100px] flex-shrink-0 hover:border-red-700/40 transition-all cursor-pointer group">
-                <span className="text-gray-600 text-xs group-hover:text-red-400">＋ Add</span>
-              </div>
+            <div className="space-y-2 border-t border-gray-800 pt-3">
+              <p className="text-[10px] text-gray-500 font-medium">Per-video traffic (khali = profile default)</p>
+              {videoQueue.map((v, i) => (
+                <div key={`${v.url}-${i}`} className="flex items-center gap-2 text-xs">
+                  <span className="text-gray-400 truncate flex-1 min-w-0" title={v.title}>{v.title}</span>
+                  <select
+                    value={v.trafficSource ?? ''}
+                    onChange={e => setVideoTraffic(i, e.target.value)}
+                    className="bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 text-[11px] max-w-[140px]"
+                  >
+                    <option value="">— profile —</option>
+                    {TRAFFIC_SOURCES.filter(t => t.id !== 'random').map(t => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
             </div>
           )}
+          <p className="text-[10px] text-gray-600">Profile-level traffic 🌐 Traffic tab · Har video ka alag source upar set kar sakte ho.</p>
+        </div>
 
-          {videoQueue.length === 0 && !pickerOpen && (
-            <p className="text-xs text-gray-600 text-center py-3">Koi video nahi — "Add Video" click karo aur channel se video chunno</p>
-          )}
-
-          {/* Inline Picker */}
-          {pickerOpen && (
-            <div className="border border-gray-700/60 rounded-xl overflow-hidden">
-              <div className="flex items-center gap-2 p-3 bg-gray-800/40 border-b border-gray-700/50">
-                <Tv size={13} className="text-gray-500 flex-shrink-0" />
-                <select value={pickerChannelId ?? ''} onChange={e => { setPickerChannelId(e.target.value ? Number(e.target.value) : null); setPickerSearch(''); }}
-                  className="flex-1 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-gray-500">
-                  <option value="">— Channel select karo —</option>
-                  {activeChannels.map(ch => <option key={ch.id} value={ch.id}>{ch.channel_name} ({getVideos ? getVideos(ch.id).length : 0} videos)</option>)}
-                </select>
-                <button onClick={shuffleAdd} disabled={!pickerChannelId}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-700/40 border border-purple-600/40 text-purple-300 text-xs font-medium disabled:opacity-30 hover:bg-purple-700/60 transition-all flex-shrink-0">
-                  <Shuffle size={12} /> Shuffle
+        {/* ═══ CONTROL MODE TOGGLE (modern segmented control) ═══ */}
+        <div className="flex items-center gap-3 px-1 flex-wrap">
+          <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Control Mode:</span>
+          <div style={{
+            display: 'inline-flex', padding: 4, borderRadius: 12, gap: 4,
+            background: 'var(--mmb-surface2)', border: '1px solid var(--mmb-border)',
+          }}>
+            {([
+              { id: 'same' as const,       label: 'Same for All',       hint: 'sab profiles ek jaisa' },
+              { id: 'perprofile' as const, label: 'Per Profile Custom', hint: 'har profile alag' },
+            ]).map(opt => {
+              const active = controlMode === opt.id;
+              return (
+                <button key={opt.id} onClick={() => setControlMode(opt.id)} title={opt.hint}
+                  style={{
+                    padding: '7px 16px', borderRadius: 9, fontSize: 12, fontWeight: 650,
+                    border: 'none', cursor: 'pointer', transition: 'all .18s',
+                    background: active ? 'var(--mmb-grad)' : 'transparent',
+                    color: active ? '#fff' : 'var(--mmb-muted)',
+                    boxShadow: active ? '0 4px 14px var(--mmb-accent-glow)' : 'none',
+                  }}>
+                  {opt.label}
                 </button>
-              </div>
-              {pickerChannelId && (
-                <>
-                  <div className="px-3 py-2 bg-gray-800/20 border-b border-gray-700/40">
-                    <div className="relative">
-                      <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
-                      <input type="text" placeholder="Title search..." value={pickerSearch} onChange={e => setPickerSearch(e.target.value)}
-                        className="w-full bg-gray-800 border border-gray-700 text-gray-200 rounded-lg pl-7 pr-3 py-1.5 text-xs focus:outline-none focus:border-gray-500" />
-                    </div>
-                  </div>
-                  <div className="max-h-52 overflow-y-auto divide-y divide-gray-800/60">
-                    {pickerVideos.length === 0 ? (
-                      <p className="text-center text-gray-600 text-xs py-5">Koi enabled video nahi mili</p>
-                    ) : pickerVideos.map(video => {
-                      const ch = activeChannels.find(c => c.id === pickerChannelId);
-                      const added = videoQueue.some(q => q.url === video.url);
-                      return (
-                        <div key={video.video_id} onClick={() => !added && addToQueue(video, ch?.channel_name ?? '')}
-                          className={`flex items-center gap-3 px-3 py-2.5 group transition-all ${added ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-800/50'}`}>
-                          <div className="w-16 h-9 rounded bg-gray-800 overflow-hidden flex-shrink-0">
-                            <img src={video.thumbnail || `https://i.ytimg.com/vi/${video.video_id}/mqdefault.jpg`} alt="" className="w-full h-full object-cover" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-gray-200 font-medium truncate">{video.title}</p>
-                            <p className="text-[10px] text-gray-600 flex items-center gap-2 mt-0.5">
-                              {video.views > 0 && <span>👁 {video.views.toLocaleString()}</span>}
-                              {video.duration > 0 && <span>⏱ {Math.floor(video.duration / 60)}:{String(video.duration % 60).padStart(2, '0')}</span>}
-                            </p>
-                          </div>
-                          {added ? <span className="text-green-500 text-[10px] flex-shrink-0">✓ Added</span> : <Plus size={13} className="text-gray-600 group-hover:text-gray-300 flex-shrink-0" />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+              );
+            })}
+          </div>
+          <span className="text-[11px] text-gray-500">
+            {controlMode === 'same' ? 'Sabhi selected profiles pe ek hi setting' : 'Neeche table mein har profile ki apni setting'}
+          </span>
         </div>
 
-        {/* ═══ CONTROL MODE TOGGLE ═══ */}
-        <div className="flex items-center gap-3 px-1">
-          <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Control:</span>
-          <button onClick={() => setControlMode('same')}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-all ${controlMode === 'same' ? 'bg-red-600/15 border-red-500 text-red-300' : 'bg-gray-800/50 border-gray-700 text-gray-500'}`}>
-            ● Same for All
-          </button>
-          <button onClick={() => setControlMode('perprofile')}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-all ${controlMode === 'perprofile' ? 'bg-red-600/15 border-red-500 text-red-300' : 'bg-gray-800/50 border-gray-700 text-gray-500'}`}>
-            ○ Per Profile Custom
-          </button>
-          <span className="text-[10px] text-gray-600 ml-2">← ek source of truth, no conflict</span>
-        </div>
-
-        {/* ═══ TABBED SETTINGS (Same for All mode) ═══ */}
-        {controlMode === 'same' && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        {/* ═══ TABBED SETTINGS (always visible — volume + traffic) ═══ */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
             {/* Tabs */}
             <div className="flex border-b border-gray-800 px-5 pt-3">
               {([
@@ -545,7 +584,15 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                 { id: 'traffic' as const, label: '🌐 Traffic Source' },
               ]).map(tab => (
                 <button key={tab.id} onClick={() => setActiveSettingsTab(tab.id)}
-                  className={`px-5 py-3 text-sm font-semibold transition-all rounded-t-lg ${activeSettingsTab === tab.id ? 'border-b-2 border-red-500 text-white bg-red-500/5' : 'border-b-2 border-transparent text-gray-500 hover:text-gray-300'}`}>
+                  className="px-5 py-3 text-sm font-semibold transition-all rounded-t-lg"
+                  style={{
+                    border: 'none',
+                    borderBottom: activeSettingsTab === tab.id ? '2px solid transparent' : '2px solid transparent',
+                    borderImage: activeSettingsTab === tab.id ? 'var(--mmb-grad) 1' : 'none',
+                    color: activeSettingsTab === tab.id ? 'var(--mmb-text)' : 'var(--mmb-muted)',
+                    background: activeSettingsTab === tab.id ? 'var(--mmb-grad-soft)' : 'transparent',
+                    cursor: 'pointer',
+                  }}>
                   {tab.label}
                 </button>
               ))}
@@ -623,6 +670,17 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                     💡 Per-profile control: neeche table mein har profile ka individual checkbox toggle karo. Yeh buttons sirf bulk shortcut hain — final decision per-profile checkbox mein reflect hoga.
                   </p>
                 </div>
+
+                <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4 space-y-3">
+                  <h3 className="text-white font-semibold text-sm">💬👍 Comment like — chance %</h3>
+                  <p className="text-[10px] text-gray-500">Kisi aur ke comment pe like. Profile ON + yeh % decide karega try hoga ya nahi.</p>
+                  <div className="flex items-center gap-3">
+                    <input type="range" min={0} max={100} step={5} value={commentLikePct}
+                      onChange={e => setCommentLikePct(Number(e.target.value))}
+                      className="flex-1 accent-pink-500" />
+                    <span className="text-pink-300 text-sm font-mono w-10 text-right">{commentLikePct}%</span>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -657,10 +715,20 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                       </select>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-400 w-14">Volume</span>
-                      <input type="range" min={20} max={100} step={5} value={volumePct} onChange={e => setVolumePct(Number(e.target.value))} className="flex-1 accent-cyan-500" />
-                      <span className="text-white text-xs font-mono w-10 bg-gray-800 border border-gray-700 px-1.5 py-0.5 rounded text-center">{volumePct}%</span>
+                      <span className="text-xs text-gray-400 w-14">Vol min</span>
+                      <input type="range" min={0} max={100} step={5} value={volumeMin}
+                        onChange={e => { const v = Number(e.target.value); setVolumeMin(v); if (v > volumeMax) setVolumeMax(v); }}
+                        className="flex-1 accent-cyan-500" />
+                      <span className="text-white text-xs font-mono w-10 bg-gray-800 border border-gray-700 px-1.5 py-0.5 rounded text-center">{volumeMin}%</span>
                     </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400 w-14">Vol max</span>
+                      <input type="range" min={0} max={100} step={5} value={volumeMax}
+                        onChange={e => { const v = Number(e.target.value); setVolumeMax(v); if (v < volumeMin) setVolumeMin(v); }}
+                        className="flex-1 accent-cyan-500" />
+                      <span className="text-white text-xs font-mono w-10 bg-gray-800 border border-gray-700 px-1.5 py-0.5 rounded text-center">{volumeMax}%</span>
+                    </div>
+                    <p className="text-[10px] text-gray-600">Random volume per session between min–max (fallback target {volumePct}%)</p>
                   </div>
 
                   {/* Behavior */}
@@ -694,27 +762,34 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                           <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${descDefault ? 'left-4' : 'left-0.5'}`} />
                         </button>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-300">⏩ Skip ads</span>
-                        <button onClick={() => setAdSkipEnabled(v => !v)} className={`relative w-9 h-5 rounded-full transition-all ${adSkipEnabled ? 'bg-blue-500' : 'bg-gray-700'}`}>
-                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${adSkipEnabled ? 'left-4' : 'left-0.5'}`} />
-                        </button>
+                      <div className="col-span-full border-t border-gray-800 pt-3 mt-1">
+                        <AdControlSettings
+                          compact
+                          showPerProfileHint
+                          values={{
+                            adSkipEnabled,
+                            adSkipMaxSec,
+                            midRollAdWaitSec,
+                            adClickEnabled,
+                            adClickDelayMinSec,
+                            adClickDelayMaxSec,
+                            adClickVisitSec,
+                          }}
+                          onChange={(patch) => {
+                            if (patch.adSkipEnabled !== undefined) setAdSkipEnabled(patch.adSkipEnabled);
+                            if (patch.adSkipMaxSec !== undefined) setAdSkipMaxSec(patch.adSkipMaxSec);
+                            if (patch.midRollAdWaitSec !== undefined) setMidRollAdWaitSec(patch.midRollAdWaitSec);
+                            if (patch.adClickEnabled !== undefined) setAdClickEnabled(patch.adClickEnabled);
+                            if (patch.adClickDelayMinSec !== undefined) setAdClickDelayMinSec(patch.adClickDelayMinSec);
+                            if (patch.adClickDelayMaxSec !== undefined) setAdClickDelayMaxSec(patch.adClickDelayMaxSec);
+                            if (patch.adClickVisitSec !== undefined) setAdClickVisitSec(patch.adClickVisitSec);
+                          }}
+                        />
+                        <label className="text-xs text-gray-500 block mt-3 mb-1">Videos per profile (sequential)</label>
+                        <input type="number" min={1} max={10} value={videosPerProfile}
+                          onChange={e => setVideosPerProfile(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+                          className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-sm" />
                       </div>
-                      {adSkipEnabled && (
-                        <div className="pl-3 space-y-2 border-l-2 border-blue-700/40">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-gray-500 w-8">Min</span>
-                            <input type="range" min={1} max={30} value={adSkipDelaySec} onChange={e => setAdSkipDelaySec(Number(e.target.value))} className="flex-1 h-1 accent-blue-500" />
-                            <span className="text-[10px] text-white font-mono w-6">{adSkipDelaySec}s</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-gray-500 w-8">Max</span>
-                            <input type="range" min={1} max={30} value={adSkipDelayMaxSec} onChange={e => setAdSkipDelayMaxSec(Number(e.target.value))} className="flex-1 h-1 accent-blue-500" />
-                            <span className="text-[10px] text-white font-mono w-6">{adSkipDelayMaxSec}s</span>
-                          </div>
-                          <p className="text-[9px] text-gray-600">Random {adSkipDelaySec}-{adSkipDelayMaxSec}s delay before "Skip Ad" click</p>
-                        </div>
-                      )}
                       <div className="flex items-center gap-3 pt-1">
                         <span className="text-xs text-gray-400 flex-1">⏸ Pause %</span>
                         <input type="range" min={0} max={50} step={2} value={pauseProbabilityPct} onChange={e => setPauseProbabilityPct(Number(e.target.value))} className="w-24 accent-gray-400" />
@@ -763,13 +838,21 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                     <h3 className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Traffic Source Distribution</h3>
                     <span className="text-[10px] text-gray-500">Must total 100%</span>
                   </div>
+                  {disabledList.length > 0 && (
+                    <p className="text-[10px] text-amber-400/90 p-2 rounded-lg bg-amber-950/20 border border-amber-800/30">
+                      Settings me band: {disabledList.join(', ')} — sliders hide, backend auto-skip karega.
+                    </p>
+                  )}
                   <div className="space-y-4">
                     {[
-                      { label: '🔔 Notification', value: srcNotif, set: setSrcNotif, color: 'accent-yellow-500' },
-                      { label: '🔍 YouTube Search', value: srcSearch, set: setSrcSearch, color: 'accent-blue-500' },
-                      { label: '🏠 Homepage', value: srcHome, set: setSrcHome, color: 'accent-green-500' },
-                    ].map(s => (
-                      <div key={s.label} className="space-y-1.5">
+                      { id: 'notification', label: '🔔 Notification', value: srcNotif, set: setSrcNotif, color: 'accent-yellow-500' },
+                      { id: 'search', label: '🔍 YouTube Search', value: srcSearch, set: setSrcSearch, color: 'accent-blue-500' },
+                      { id: 'homepage', label: '🏠 Homepage', value: srcHome, set: setSrcHome, color: 'accent-green-500' },
+                      { id: 'google', label: '🌐 Google Search', value: srcGoogle, set: setSrcGoogle, color: 'accent-red-400' },
+                      { id: 'bing', label: '🔷 Bing Search', value: srcBing, set: setSrcBing, color: 'accent-purple-400' },
+                      { id: 'channel_discovery', label: '📺 Channel Discovery', value: srcChannelDisc, set: setSrcChannelDisc, color: 'accent-orange-400' },
+                    ].filter(s => isEnabled(s.id)).map(s => (
+                      <div key={s.id} className="space-y-1.5">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-gray-300 font-medium">{s.label}</span>
                           <span className="text-white text-xs font-mono bg-gray-800 border border-gray-700 px-2 py-0.5 rounded">{s.value}%</span>
@@ -783,7 +866,7 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         <span className="text-gray-400 text-xs font-mono bg-gray-800 border border-gray-700 px-2 py-0.5 rounded">{srcDirect}%</span>
                       </div>
                       <div className="w-full h-1.5 rounded-full bg-gray-700"><div className="h-full rounded-full bg-gray-500 transition-all" style={{ width: `${srcDirect}%` }} /></div>
-                      <p className="text-[10px] text-gray-600">Auto-calculated: 100 - (Notif + Search + Home)</p>
+                      <p className="text-[10px] text-gray-600">Auto-calculated: 100 - (Notif + YT Search + Home + Google + Bing + Channel Disc)</p>
                     </div>
                   </div>
                   {srcNotif + srcSearch + srcHome > 100 && (
@@ -796,7 +879,6 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
               </div>
             )}
           </div>
-        )}
 
         {/* ═══ PROFILE TABLE ═══ */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
@@ -815,8 +897,8 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
           {gmailProfiles.length === 0 ? (
             <div className="py-10 text-center space-y-3">
               <AlertTriangle size={28} className="text-yellow-500 mx-auto" />
-              <p className="text-gray-400 text-sm font-medium">Koi Gmail profile nahi hai</p>
-              <p className="text-gray-600 text-xs">Pehle Gmail Setup page mein profiles ka email bharo</p>
+              <p className="text-gray-400 text-sm font-medium">No Gmail profiles found</p>
+              <p className="text-gray-600 text-xs">Add Gmail credentials in the Gmail Setup page first</p>
               {setActiveTab && (
                 <button onClick={() => setActiveTab('gmail-setup')} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-700/40 border border-blue-600/40 text-blue-300 text-xs font-medium hover:bg-blue-700/60 transition-all">
                   <Mail size={13} /> Gmail Setup →
@@ -849,12 +931,9 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         <td className="px-3 py-2.5 text-white font-medium truncate max-w-[120px]">{p.name}</td>
                         <td className="px-3 py-2.5 max-w-[160px]"><span className="truncate block text-red-300/70 font-mono">{meta?.email || '—'}</span></td>
                         <td className="px-2 py-2.5 text-center">
-                          <select value={ov?.source || 'direct'} onChange={e => setOverride(p.id, 'source', e.target.value as Source)}
+                          <select value={enabledSourceOptions.some(s => s.id === (ov?.source || 'direct')) ? (ov?.source || 'direct') : (enabledSourceOptions[0]?.id ?? 'direct')} onChange={e => setOverride(p.id, 'source', e.target.value as Source)}
                             className="bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-1.5 py-1 text-[10px] focus:outline-none cursor-pointer">
-                            <option value="notification">🔔 Notif</option>
-                            <option value="search">🔍 Search</option>
-                            <option value="homepage">🏠 Home</option>
-                            <option value="direct">🔗 Direct</option>
+                            {enabledSourceOptions.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                           </select>
                         </td>
                         <td className="px-3 py-2.5 text-center">
@@ -889,7 +968,8 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                     <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[64px]">⏱ Watch%</th>
                     <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[56px]">🔊 Vol%</th>
                     <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">⏭ Seek</th>
-                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">🚫 Ad</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">⏭ Skip</th>
+                    <th className="px-2 py-2.5 text-center text-gray-500 font-medium min-w-[44px]">🖱 Click</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/40">
@@ -901,9 +981,9 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         <td className="px-3 py-2.5"><input type="checkbox" checked={isSel} onChange={() => setSelectedIds(prev => { const next = new Set(prev); next.has(p.id) ? next.delete(p.id) : next.add(p.id); return next; })} className="accent-red-500 cursor-pointer" /></td>
                         <td className="px-3 py-2.5 text-white font-medium truncate max-w-[120px]">{p.name}</td>
                         <td className="px-2 py-2.5 text-center">
-                          <select value={ov?.source || 'direct'} onChange={e => setOverride(p.id, 'source', e.target.value as Source)}
+                          <select value={enabledSourceOptions.some(s => s.id === (ov?.source || 'direct')) ? (ov?.source || 'direct') : (enabledSourceOptions[0]?.id ?? 'direct')} onChange={e => setOverride(p.id, 'source', e.target.value as Source)}
                             className="bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-1.5 py-1 text-[10px] focus:outline-none cursor-pointer">
-                            <option value="notification">🔔</option><option value="search">🔍</option><option value="homepage">🏠</option><option value="direct">🔗</option>
+                            {enabledSourceOptions.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                           </select>
                         </td>
                         {ACTION_COLS.map(col => (
@@ -918,21 +998,35 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                             {QUALITY_OPTIONS.map(q => <option key={q} value={q}>{q}</option>)}
                           </select>
                         </td>
-                        {/* Per-profile: Watch % */}
+                        {/* Per-profile: Watch % RANGE (min–max, random within) */}
                         <td className="px-1 py-2 text-center">
-                          <input type="number" min={10} max={100} step={5}
-                            value={ov?.watchPct ?? rand(watchPctMin, watchPctMax)}
-                            onChange={e => setOverride(p.id, 'watchPct', Math.max(10, Math.min(100, Number(e.target.value))))}
-                            className="w-12 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
-                          <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                          <div className="flex items-center justify-center gap-0.5">
+                            <input type="number" min={10} max={100} step={5} title="Watch % minimum"
+                              value={ov?.watchMin ?? watchPctMin}
+                              onChange={e => { const v = Math.max(10, Math.min(100, Number(e.target.value))); setOverride(p.id, 'watchMin', v); if (v > (ov?.watchMax ?? watchPctMax)) setOverride(p.id, 'watchMax', v); }}
+                              className="w-10 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                            <span className="text-[9px] text-gray-600">–</span>
+                            <input type="number" min={10} max={100} step={5} title="Watch % maximum"
+                              value={ov?.watchMax ?? watchPctMax}
+                              onChange={e => { const v = Math.max(10, Math.min(100, Number(e.target.value))); setOverride(p.id, 'watchMax', v); if (v < (ov?.watchMin ?? watchPctMin)) setOverride(p.id, 'watchMin', v); }}
+                              className="w-10 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                            <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                          </div>
                         </td>
-                        {/* Per-profile: Volume % */}
+                        {/* Per-profile: Volume % RANGE (min–max, random within) */}
                         <td className="px-1 py-2 text-center">
-                          <input type="number" min={20} max={100} step={5}
-                            value={ov?.volumePct ?? volumePct}
-                            onChange={e => setOverride(p.id, 'volumePct', Math.max(20, Math.min(100, Number(e.target.value))))}
-                            className="w-12 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
-                          <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                          <div className="flex items-center justify-center gap-0.5">
+                            <input type="number" min={0} max={100} step={5} title="Volume % minimum"
+                              value={ov?.volMin ?? volumeMin}
+                              onChange={e => { const v = Math.max(0, Math.min(100, Number(e.target.value))); setOverride(p.id, 'volMin', v); if (v > (ov?.volMax ?? volumeMax)) setOverride(p.id, 'volMax', v); }}
+                              className="w-10 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                            <span className="text-[9px] text-gray-600">–</span>
+                            <input type="number" min={0} max={100} step={5} title="Volume % maximum"
+                              value={ov?.volMax ?? volumeMax}
+                              onChange={e => { const v = Math.max(0, Math.min(100, Number(e.target.value))); setOverride(p.id, 'volMax', v); if (v < (ov?.volMin ?? volumeMin)) setOverride(p.id, 'volMin', v); }}
+                              className="w-10 bg-gray-800 border border-gray-700 text-white text-[10px] text-center rounded px-1 py-0.5 focus:outline-none" />
+                            <span className="text-[9px] text-gray-600 ml-0.5">%</span>
+                          </div>
                         </td>
                         {/* Per-profile: Seek toggle */}
                         <td className="px-2 py-2.5 text-center">
@@ -941,6 +1035,9 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                         {/* Per-profile: Ad skip toggle */}
                         <td className="px-2 py-2.5 text-center">
                           <input type="checkbox" checked={ov?.adSkip ?? adSkipEnabled} onChange={e => setOverride(p.id, 'adSkip', e.target.checked)} className="accent-blue-500 cursor-pointer w-3.5 h-3.5" />
+                        </td>
+                        <td className="px-2 py-2.5 text-center">
+                          <input type="checkbox" checked={ov?.adClick ?? adClickEnabled} onChange={e => setOverride(p.id, 'adClick', e.target.checked)} className="accent-amber-500 cursor-pointer w-3.5 h-3.5" title="1 ad click per video" />
                         </td>
                       </tr>
                     );
@@ -998,7 +1095,12 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
                       <span className="text-white text-xs font-medium flex-1 truncate">{job.profileName}</span>
                       <span className="text-[10px] text-gray-500 bg-gray-800/80 px-1.5 py-0.5 rounded flex-shrink-0">
-                        {job.source === 'notification' ? '🔔' : job.source === 'search' ? '🔍' : job.source === 'homepage' ? '🏠' : '🔗'}
+                        {job.source === 'notification' ? '🔔'
+                          : job.source === 'search'   ? '🔍'
+                          : job.source === 'homepage' ? '🏠'
+                          : job.source === 'google'   ? '🌐'
+                          : job.source === 'bing'     ? '🔷'
+                          : '🔗'}
                       </span>
                       <span className="text-[10px] flex gap-0.5 flex-shrink-0">
                         {job.actions?.like && <span>👍</span>}{job.actions?.subscribe && <span>📺</span>}{job.actions?.comment && <span>💬</span>}
@@ -1057,7 +1159,12 @@ export default function EngagementPage({ profiles, channels = [], getVideos, set
                 className="w-10 bg-transparent text-white text-xs text-center focus:outline-none" />
             </div>
             <button onClick={() => void handleLaunch()} disabled={launching || !videoQueue.length || !launchProfiles.length}
-              className="flex items-center gap-2 px-7 py-3 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold shadow-lg shadow-red-900/40 transition-all hover:scale-[1.02] active:scale-95">
+              className="flex items-center gap-2 px-8 py-3 rounded-xl text-white text-sm font-bold transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: 'var(--mmb-grad)', backgroundSize: '160% 160%',
+                boxShadow: '0 8px 24px var(--mmb-accent-glow)', border: 'none',
+                letterSpacing: '.02em',
+              }}>
               {launching ? <><RefreshCw size={15} className="animate-spin" /> Launching…</> : <><Zap size={15} /> LAUNCH ENGAGEMENT</>}
             </button>
           </div>

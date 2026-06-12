@@ -1,0 +1,18 @@
+{
+  "profile_id": "36b2dd7e-4546-40ea-beb8-afc3d6704080",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Winnsboro",
+  "timezone": "America/Chicago",
+  "lat": 32.9573,
+  "lon": -95.2902,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 720810770,
+  "canvas_noise": 0.006516,
+  "webgl_noise": 0.001683,
+  "audio_noise": 2.92e-05,
+  "cached_at": 1781182681.7243419
+}

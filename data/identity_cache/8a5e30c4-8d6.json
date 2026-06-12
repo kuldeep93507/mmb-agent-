@@ -1,0 +1,18 @@
+{
+  "profile_id": "8a5e30c4-8d6d-4c56-ac8a-f6a0a9731f85",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Chicago",
+  "timezone": "America/Chicago",
+  "lat": 41.8818,
+  "lon": -87.6371,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1406764626,
+  "canvas_noise": 0.003888,
+  "webgl_noise": 0.00173,
+  "audio_noise": 7.392e-05,
+  "cached_at": 1780913733.1564033
+}

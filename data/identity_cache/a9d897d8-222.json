@@ -1,0 +1,18 @@
+{
+  "profile_id": "a9d897d8-2224-4405-b4c3-02f3ba7ddde8",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Livonia",
+  "timezone": "America/Detroit",
+  "lat": 42.363,
+  "lon": -83.3627,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 2377850448,
+  "canvas_noise": 0.007246,
+  "webgl_noise": 0.002991,
+  "audio_noise": 7.613e-05,
+  "cached_at": 1781053862.3810244
+}

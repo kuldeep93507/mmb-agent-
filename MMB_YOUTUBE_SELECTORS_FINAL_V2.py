@@ -764,7 +764,10 @@ DESKTOP = {
     "subscribe_button": (
         # ⭐ ARIA most stable
         'button[aria-label^="Subscribe to" i]',
+        # NEW 2025-2026 ytSpecButtonShapeNextHost (inspect evidence Jun 2026)
+        'button.ytSpecButtonShapeNextHost[aria-label^="Subscribe to" i]',
         'ytd-subscribe-button-renderer button',
+        'subscribe-button-view-model button',
         '#subscribe-button button',
         '#subscribe-button-shape button',
     ),

@@ -1,0 +1,18 @@
+{
+  "profile_id": "b9152c54-9b85-464a-834c-6f465b6c0c7d",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Wasilla",
+  "timezone": "America/Anchorage",
+  "lat": 61.5883,
+  "lon": -149.3959,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 4239542586,
+  "canvas_noise": 0.007933,
+  "webgl_noise": 0.002333,
+  "audio_noise": 7.18e-05,
+  "cached_at": 1781182792.5564964
+}

@@ -1,0 +1,58 @@
+{
+  "profile_id": "c58a40dc-d6ff-4234-8d26-a592804d32ea",
+  "profile_name": "Profile-32ea",
+  "login_state": true,
+  "saved_at": "2026-06-08T05:20:37Z",
+  "truth_table": [
+    {
+      "action": "autoplay_off",
+      "pass": true,
+      "clicked": true,
+      "reason": "UI_VERIFIED visible toggle off"
+    },
+    {
+      "action": "volume_75",
+      "pass": false,
+      "clicked": false,
+      "reason": "slider=38% target=75% | player_api_not_found"
+    },
+    {
+      "action": "comment_like",
+      "pass": true,
+      "clicked": true,
+      "reason": "VERIFIED comment_liked sel=ytd-comment-view-model ytd-toggle-button-renderer#like-button button"
+    }
+  ],
+  "entries": [
+    {
+      "action": "LOGIN_STATE",
+      "verified": true,
+      "reason": "logged_in",
+      "ts": 1780895812.4273238
+    },
+    {
+      "action": "autoplay_off",
+      "selector": "button.ytp-autonav-toggle",
+      "clicked": true,
+      "verified": true,
+      "reason": "UI_VERIFIED visible toggle off",
+      "ts": 1780895814.6447184
+    },
+    {
+      "action": "volume_75",
+      "selector": ".ytp-volume-panel slider CDP click",
+      "clicked": false,
+      "verified": false,
+      "reason": "slider=38% target=75% | player_api_not_found",
+      "ts": 1780895821.2169018
+    },
+    {
+      "action": "comment_like",
+      "selector": "ytd-toggle-button-renderer#like-button",
+      "clicked": true,
+      "verified": true,
+      "reason": "VERIFIED comment_liked sel=ytd-comment-view-model ytd-toggle-button-renderer#like-button button",
+      "ts": 1780896034.4496312
+    }
+  ]
+}

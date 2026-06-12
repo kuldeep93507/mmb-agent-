@@ -16,6 +16,18 @@ export interface DailyTrendPoint {
   watchTime: number;
 }
 
+/** One day's activity for a single profile (per-profile daily report). */
+export interface ProfileDailyPoint {
+  date: string;
+  views: number;       // videos watched that day
+  watchTime: number;   // seconds
+  likes: number;
+  subscribes: number;
+  comments: number;
+  ads: number;         // ads shown
+  adsSkipped: number;
+}
+
 export interface RecentActivityEntry {
   time: number;
   profileId: string;
@@ -45,6 +57,8 @@ export interface AnalyticsResponse {
   trafficDirectFallback?: number;
   trafficBacklinkFallback?: number;
   perProfile: Record<string, ProfileAnalytics>;
+  /** Each profile's day-by-day activity (newest day first). */
+  perProfileDaily?: Record<string, ProfileDailyPoint[]>;
   recentActivity?: RecentActivityEntry[];
   dailyTrend?: DailyTrendPoint[];
   filter?: string;

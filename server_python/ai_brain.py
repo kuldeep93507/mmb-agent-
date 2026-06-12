@@ -11,7 +11,7 @@ Features:
   6. AI error recovery — self-heals when YouTube updates its UI
   7. Natural watch behavior pattern
 
-Uses claude-haiku-4-5 (fast + cost efficient).
+Tiered models (Settings UI): Haiku → simple, Sonnet → vision/recovery, Opus → hard decisions.
 Falls back gracefully if API unavailable.
 """
 
@@ -68,12 +68,19 @@ def is_available() -> bool:
     return _get_client() is not None
 
 
-def _call(prompt: str, max_tokens: int = 200, image_b64: str | None = None) -> str | None:
-    """Single Claude API call. Returns text or None on failure."""
+def _call(
+    prompt: str,
+    max_tokens: int = 200,
+    image_b64: str | None = None,
+    task: str = "generate_comment",
+) -> str | None:
+    """Single Claude API call with tiered model routing. Returns text or None on failure."""
     client = _get_client()
     if not client:
         return None
     try:
+        from server_python.ai_model_config import get_model_for_task
+        model = get_model_for_task(task)
         if image_b64:
             content = [
                 {
@@ -90,13 +97,13 @@ def _call(prompt: str, max_tokens: int = 200, image_b64: str | None = None) -> s
             content = prompt
 
         resp = client.messages.create(
-            model="claude-haiku-4-5",
+            model=model,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": content}],
         )
         return resp.content[0].text.strip()
     except Exception as e:
-        logger.warning(f"[AIBrain] API call failed: {e}")
+        logger.warning(f"[AIBrain] API call failed ({task}): {e}")
         return None
 
 
@@ -104,27 +111,60 @@ def _call(prompt: str, max_tokens: int = 200, image_b64: str | None = None) -> s
 # 1. COMMENT GENERATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _comment_quality_enabled() -> bool:
+    try:
+        import json
+        from pathlib import Path
+        p = Path(__file__).resolve().parent.parent / "user-settings.json"
+        if p.exists():
+            s = json.loads(p.read_text(encoding="utf-8"))
+            v = s.get("aiCommentQualityEnabled", True)
+            return v is True or str(v).lower() == "true"
+    except Exception:
+        pass
+    return True
+
+
 def generate_comment(
     video_title: str,
     channel_name: str = "",
     fallback_templates: list[str] | None = None,
     rng: random.Random | None = None,
+    transcript_snippet: str = "",
+    description_snippet: str = "",
+    top_comments: list[str] | None = None,
+    memory_context: str = "",
 ) -> str:
     context = f'Video: "{video_title}"'
     if channel_name:
         context += f' by {channel_name}'
 
+    enriched = _comment_quality_enabled()
+    extra = ""
+    if enriched:
+        if description_snippet:
+            extra += f"\nDescription excerpt: {description_snippet[:400]}"
+        if transcript_snippet:
+            extra += f"\nTranscript excerpt: {transcript_snippet[:500]}"
+        if top_comments:
+            samples = "\n".join(f'- "{c[:100]}"' for c in top_comments[:4] if c)
+            if samples:
+                extra += f"\nExisting top comments (match tone, do NOT copy):\n{samples}"
+        if memory_context:
+            extra += f"\n\n{memory_context}"
+
     prompt = (
-        f"{context}\n\n"
+        f"{context}{extra}\n\n"
         "Write ONE short YouTube comment for this video. Rules:\n"
         "- 1-2 sentences max\n"
         "- Sound like a real viewer, not a bot\n"
-        "- Relate naturally to the video topic\n"
-        "- No hashtags, no emojis\n"
+        + ("- Reference something specific from the content (not just the title)\n" if enriched else "- Relate naturally to the video topic\n")
+        + "- No hashtags, no emojis\n"
         "- Casual, genuine tone\n"
-        "Output ONLY the comment text, nothing else."
+        + ("- Must differ from existing comments and this profile's past comments\n" if enriched and (top_comments or memory_context) else "")
+        + "Output ONLY the comment text, nothing else."
     )
-    result = _call(prompt, max_tokens=80)
+    result = _call(prompt, max_tokens=100, task="generate_comment")
     if result:
         comment = result.strip('"').strip("'")
         if comment and len(comment) > 5:
@@ -152,24 +192,80 @@ def pick_best_search_keyword(
     if channel_name:
         context += f', Channel: "{channel_name}"'
 
+    from server_python.search_keyword_planner import (
+        filter_keyword_pool,
+        validate_search_keyword,
+    )
+
     prompt = (
         f"{context}\n\n"
         "What would a real YouTube user type in the search bar to find this video?\n"
         "Rules:\n"
-        "- 2-5 words only\n"
-        "- Natural search query, not the exact title\n"
-        "- Think like someone who wants to learn about this topic\n"
+        "- 3-6 words only (max 48 characters)\n"
+        "- MUST use words from the video title topic — not generic CPC terms alone\n"
+        "- Natural search query, not the exact full title\n"
+        "- NEVER output URL or 11-char video ID\n"
         "Output ONLY the search query, nothing else."
     )
-    result = _call(prompt, max_tokens=30)
-    if result and len(result) > 3:
-        logger.info(f"[AIBrain] AI keyword: {result!r}")
-        return result.strip('"').strip("'")
+    result = _call(prompt, max_tokens=30, task="pick_keyword")
+    if result and len(result.strip()) > 3:
+        keyword = result.strip().strip('"').strip("'")[:48]
+        if validate_search_keyword(keyword, video_title, channel_name):
+            logger.info(f"[AIBrain] AI keyword (verified): {keyword!r}")
+            return keyword
+        logger.info(f"[AIBrain] AI keyword rejected (not title-related): {keyword!r}")
 
-    if fallback_keywords:
+    verified = filter_keyword_pool(fallback_keywords or [], video_title, channel_name)
+    if verified:
         _rng = rng or random.Random()
-        return _rng.choice(fallback_keywords)
-    return video_title
+        return _rng.choice(verified)
+    return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2b. VISION-FIRST AD SKIP (Level 1 — gated by settings flag)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def vision_ad_skip_enabled() -> bool:
+    """Feature flag — UI shows Coming Soon; backend ready when enabled."""
+    try:
+        import json
+        from pathlib import Path
+        p = Path(__file__).resolve().parent.parent / "user-settings.json"
+        if p.exists():
+            s = json.loads(p.read_text(encoding="utf-8"))
+            v = s.get("aiVisionAdSkipEnabled", False)
+            return v is True or str(v).lower() == "true"
+    except Exception:
+        pass
+    return False
+
+
+def find_ad_skip_button_vision(screenshot_b64: str) -> dict:
+    """
+    Pixel-level skip button locate when CSS selectors fail.
+    Returns: {found, x, y, confidence, explanation}
+    """
+    if not vision_ad_skip_enabled():
+        return {"found": False, "x": 0, "y": 0, "confidence": 0, "explanation": "Vision ad-skip disabled (Coming Soon)"}
+
+    prompt = (
+        "YouTube ad is playing. Find the SKIP AD button in this screenshot.\n"
+        "Return the CENTER coordinates of the clickable Skip button.\n\n"
+        "Reply as JSON only:\n"
+        '{"found": true/false, "x": <int>, "y": <int>, "confidence": 0.0-1.0, "explanation": "..."}'
+    )
+    result = _call(prompt, max_tokens=120, image_b64=screenshot_b64, task="vision_ad_skip")
+    if result:
+        try:
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                logger.info(f"[AIBrain] Vision ad-skip: found={data.get('found')} x={data.get('x')} y={data.get('y')}")
+                return data
+        except Exception:
+            pass
+    return {"found": False, "x": 0, "y": 0, "confidence": 0, "explanation": "Vision scan failed"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,7 +304,7 @@ def scan_page_for_element(
             '{"found": true/false, "css_selector": "...", "text_to_click": "...", "explanation": "..."}'
         )
 
-    result = _call(prompt, max_tokens=150, image_b64=screenshot_b64)
+    result = _call(prompt, max_tokens=150, image_b64=screenshot_b64, task="scan_page")
     if result:
         try:
             json_match = re.search(r'\{.*\}', result, re.DOTALL)
@@ -263,7 +359,7 @@ def identify_target_video(
         'Reply as JSON only: {"index": <number>, "reason": "..."}'
     )
 
-    result = _call(prompt, max_tokens=80)
+    result = _call(prompt, max_tokens=80, task="identify_video")
     if result:
         try:
             json_match = re.search(r'\{.*\}', result, re.DOTALL)
@@ -311,7 +407,7 @@ def verify_engagement(
             "Reply as JSON only:\n"
             '{"confirmed": true/false, "state": "what you see", "suggestion": "what to do if not confirmed"}'
         )
-        result = _call(prompt, max_tokens=120, image_b64=screenshot_b64)
+        result = _call(prompt, max_tokens=120, image_b64=screenshot_b64, task="verify_engagement")
     else:
         prompt = (
             f"YouTube page DOM summary:\n{dom_summary[:2000]}\n\n"
@@ -319,7 +415,7 @@ def verify_engagement(
             "Reply as JSON only:\n"
             '{"confirmed": true/false, "state": "what you see", "suggestion": "what to do if not confirmed"}'
         )
-        result = _call(prompt, max_tokens=120)
+        result = _call(prompt, max_tokens=120, task="verify_engagement")
 
     if result:
         try:
@@ -359,7 +455,7 @@ def recover_from_error(
             "Reply as JSON only:\n"
             '{"action": "click|navigate|search|wait|skip", "target": "...", "explanation": "..."}'
         )
-        result = _call(prompt, max_tokens=150, image_b64=screenshot_b64)
+        result = _call(prompt, max_tokens=150, image_b64=screenshot_b64, task="recover_error")
     else:
         prompt = (
             f"YouTube automation error recovery.\n"
@@ -371,7 +467,7 @@ def recover_from_error(
             "Reply as JSON only:\n"
             '{"action": "click|navigate|search|wait|skip", "target": "...", "explanation": "..."}'
         )
-        result = _call(prompt, max_tokens=150)
+        result = _call(prompt, max_tokens=150, task="recover_error")
 
     if result:
         try:
@@ -418,34 +514,42 @@ def pick_keyword_for_persona(
         f"Profile seed: {profile_seed % 997}\n\n"
         "What would THIS specific viewer type in YouTube search to find this video?\n"
         "Rules:\n"
-        "- 2-5 words only\n"
+        "- 2-5 words only (max 48 characters total)\n"
         "- Natural phrasing for this viewer type (e.g. student searches differently than professional)\n"
+        "- Use words from the video topic — must relate to the title\n"
         "- Do NOT use the exact video title\n"
+        "- NEVER output a YouTube URL or 11-character video ID\n"
         "- Be unique — think from this persona's perspective\n"
         "Output ONLY the search query text, nothing else."
     )
 
-    result = _call(prompt, max_tokens=30)
+    from server_python.search_keyword_planner import (
+        filter_keyword_pool,
+        validate_search_keyword,
+    )
+
+    result = _call(prompt, max_tokens=30, task="pick_keyword_persona")
     if result and len(result.strip()) > 3:
-        keyword = result.strip().strip('"').strip("'")
-        # Sanity: reject if same as title
-        if keyword.lower() != video_title.lower() and len(keyword) > 3:
+        keyword = result.strip().strip('"').strip("'")[:48]
+        if (
+            keyword.lower() != video_title.lower()
+            and validate_search_keyword(keyword, video_title, channel_name)
+        ):
             logger.info(
                 f"[AIBrain] Persona keyword [{viewer_persona!r}]: {keyword!r}"
             )
             return keyword
+        logger.info(
+            f"[AIBrain] Persona AI rejected (not title-related): {keyword!r}"
+        )
 
-    # AI unavailable or bad response — pick from fallback pool
-    if fallback_keywords:
+    verified = filter_keyword_pool(fallback_keywords or [], video_title, channel_name)
+    if verified:
         _rng = rng or random.Random(profile_seed)
-        # Shuffle fallback list with profile seed so order is per-profile unique
-        shuffled = list(fallback_keywords)
-        _rng.shuffle(shuffled)
-        return shuffled[0]
+        _rng.shuffle(verified)
+        return verified[0]
 
-    # Last resort: use first 3-4 words of title
-    words = video_title.split()
-    return " ".join(words[:4]) if len(words) >= 4 else video_title
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -472,7 +576,7 @@ def get_natural_watch_pattern(
         '"scroll_breaks": 0-3, "engagement_delay_factor": 0.8-1.3}\n'
         "Output ONLY valid JSON."
     )
-    result = _call(prompt, max_tokens=80)
+    result = _call(prompt, max_tokens=80, task="watch_pattern")
     if result:
         try:
             json_match = re.search(r'\{.*\}', result, re.DOTALL)

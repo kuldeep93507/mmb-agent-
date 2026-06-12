@@ -1,0 +1,22 @@
+[
+  {
+    "ts": 1781184145453,
+    "proof": "SKIP_UI_BUT_NOT_VERIFIED",
+    "domDump": {
+      "skipCandidates": [
+        {
+          "selector": "button[aria-label*=\"Skip\" i]",
+          "id": "",
+          "cls": "ytSpecButtonShapeNextHost ytSpecButtonShapeNextTonal ytSpecButtonShapeNextMono y",
+          "w": 128,
+          "h": 36,
+          "visible": true,
+          "text": "Skip navigation"
+        }
+      ],
+      "countdown": "",
+      "adShowingClass": false,
+      "url": "https://www.youtube.com/watch?v=bOx62E3tOx0&t=308s"
+    }
+  }
+]

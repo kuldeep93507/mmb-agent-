@@ -14,8 +14,12 @@ timeout /t 3 /nobreak >nul
 start "MMB Frontend" cmd /k "npx vite --port 5178"
 
 echo.
-echo Backend: http://localhost:3100
-echo Frontend: http://localhost:5178
+echo Backend:  http://localhost:3100
+echo Frontend: http://localhost:5178  ^(naya UI yahi khulega^)
 echo.
+echo Browser kholo: http://localhost:5178
+start "" "http://localhost:5178"
+echo.
+echo Offline bundle: MMB-Agent.html ^(npm run build ke baad^)
 echo Both windows khule hain — band mat karna!
 pause

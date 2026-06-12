@@ -1,0 +1,72 @@
+{
+  "profile_id": "c58a40dc-d6ff-4234-8d26-a592804d32ea",
+  "profile_name": "Profile-32ea",
+  "login_state": true,
+  "saved_at": "2026-06-09T18:01:12Z",
+  "truth_table": [
+    {
+      "action": "autoplay_off",
+      "pass": true,
+      "clicked": true,
+      "reason": "UI_VERIFIED visible toggle off"
+    },
+    {
+      "action": "volume_75",
+      "pass": false,
+      "clicked": false,
+      "reason": "slider=53% target=75% | player_api_not_found"
+    },
+    {
+      "action": "description_expand",
+      "pass": true,
+      "clicked": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand"
+    },
+    {
+      "action": "description_collapse",
+      "pass": false,
+      "clicked": false,
+      "reason": "collapse_button_not_found"
+    }
+  ],
+  "entries": [
+    {
+      "action": "LOGIN_STATE",
+      "verified": true,
+      "reason": "logged_in",
+      "ts": 1781027967.449865
+    },
+    {
+      "action": "autoplay_off",
+      "selector": "button.ytp-autonav-toggle",
+      "clicked": true,
+      "verified": true,
+      "reason": "UI_VERIFIED visible toggle off",
+      "ts": 1781027967.6476312
+    },
+    {
+      "action": "volume_75",
+      "selector": ".ytp-volume-panel slider CDP click",
+      "clicked": false,
+      "verified": false,
+      "reason": "slider=53% target=75% | player_api_not_found",
+      "ts": 1781027975.3766973
+    },
+    {
+      "action": "description_expand",
+      "selector": "tp-yt-paper-button#expand",
+      "clicked": true,
+      "verified": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand",
+      "ts": 1781028043.6599352
+    },
+    {
+      "action": "description_collapse",
+      "selector": "tp-yt-paper-button#collapse",
+      "clicked": false,
+      "verified": false,
+      "reason": "collapse_button_not_found",
+      "ts": 1781028047.4460053
+    }
+  ]
+}

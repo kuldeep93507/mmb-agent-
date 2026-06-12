@@ -95,6 +95,40 @@ def _mlx_proxy_payload(proxy: dict, api_format: str = "cloud") -> dict:
     }
 
 
+def _parse_custom_resolution(body: dict) -> Optional[tuple[int, int]]:
+    """Parse user-selected resolution from create-full request body."""
+    raw_res = body.get("resolution")
+    if raw_res and isinstance(raw_res, str) and raw_res.lower() != "auto":
+        try:
+            parts = raw_res.lower().replace("×", "x").split("x")
+            if len(parts) == 2:
+                w, h = int(parts[0].strip()), int(parts[1].strip())
+                if 320 <= w <= 7680 and 240 <= h <= 4320:
+                    return w, h
+        except Exception:
+            pass
+
+    fp = body.get("fingerprintConfig") or {}
+    fp_res = fp.get("resolution")
+    if fp_res and isinstance(fp_res, str) and "x" in fp_res.lower():
+        try:
+            parts = fp_res.lower().replace("×", "x").split("x")
+            w, h = int(parts[0].strip()), int(parts[1].strip())
+            if 320 <= w <= 7680 and 240 <= h <= 4320:
+                return w, h
+        except Exception:
+            pass
+
+    try:
+        w = int(body.get("screenWidth") or body.get("screen_width") or 0)
+        h = int(body.get("screenHeight") or body.get("screen_height") or 0)
+        if 320 <= w <= 7680 and 240 <= h <= 4320:
+            return w, h
+    except Exception:
+        pass
+    return None
+
+
 async def create_full_profile(body: dict) -> dict:
     """
     Create profile with REAL antidetect + proxy alignment.
@@ -112,17 +146,9 @@ async def create_full_profile(body: dict) -> dict:
 
     # Parse user-selected resolution override (e.g. "1920x1080"). Falls back to
     # country-pool deterministic pick when unset / "auto" / malformed.
-    custom_resolution: Optional[tuple[int, int]] = None
-    raw_res = body.get("resolution")
-    if raw_res and isinstance(raw_res, str) and raw_res.lower() != "auto":
-        try:
-            parts = raw_res.lower().replace("×", "x").split("x")
-            if len(parts) == 2:
-                w, h = int(parts[0].strip()), int(parts[1].strip())
-                if 320 <= w <= 7680 and 240 <= h <= 4320:
-                    custom_resolution = (w, h)
-        except Exception:
-            custom_resolution = None
+    custom_resolution = _parse_custom_resolution(body)
+    if custom_resolution:
+        log.info("[ProfileCreate] User resolution: %dx%d", *custom_resolution)
 
     temp_id = str(uuid.uuid4())
     if proxy_type == "multilogin" and browser_type == "multilogin":
@@ -152,6 +178,7 @@ async def create_full_profile(body: dict) -> dict:
             public_ip,
             proxy_payload,
             fp_config,
+            screen_override=custom_resolution,
         )
         antidetect = antidetect_real_summary(identity, public_ip, proxy)
 
@@ -204,6 +231,14 @@ async def create_full_profile(body: dict) -> dict:
     if proxy.get("type") == "smartproxy" and temp_id != profile_id:
         from server_python.smart_proxy import get_proxy_manager
         get_proxy_manager().migrate_session(temp_id, profile_id)
+
+    if identity and temp_id != profile_id:
+        try:
+            from server_python.identity_manager import IdentityManager
+            from server_python.smart_proxy import get_proxy_manager
+            IdentityManager(get_proxy_manager()).migrate_cache(temp_id, profile_id)
+        except Exception as e:
+            log.warning("[ProfileCreate] Identity cache migrate failed: %s", e)
 
     fp_out = {
         "timezone": identity.timezone if identity else "custom",

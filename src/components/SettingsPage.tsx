@@ -29,6 +29,12 @@ import {
 } from '../utils/notificationPrefs';
 import { requestNotificationPermission } from '../services/notifications';
 import { emptyTrash } from '../utils/trashApi';
+import {
+  TRAFFIC_SOURCE_DEFS,
+  fetchTrafficSourceStatus,
+  toggleTrafficSource,
+  type TrafficSourceRow,
+} from '../utils/trafficSourceControl';
 
 function settingOn(v: boolean | string | undefined): boolean {
   return v === true || v === 'true';
@@ -38,6 +44,15 @@ const PROVIDER_INFO: Record<BrowserProvider, { label: string; connection: string
   morelogin: { label: 'MoreLogin', connection: 'localhost:40000' },
   multilogin: { label: 'Multilogin', connection: 'api.multilogin.com' },
 };
+
+// Claude model choices for the tiered AI switcher (Settings → AI Models)
+const AI_MODEL_OPTIONS: { id: string; label: string }[] = [
+  { id: 'claude-haiku-4-5',  label: 'Haiku 4.5 — fastest, cheapest' },
+  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 — balanced' },
+  { id: 'claude-opus-4-5',   label: 'Opus 4.5 — most powerful' },
+  { id: 'claude-3-5-haiku-latest',  label: 'Haiku 3.5 (legacy)' },
+  { id: 'claude-3-5-sonnet-latest', label: 'Sonnet 3.5 (legacy)' },
+];
 
 const PROXY_LIFE_OPTIONS = ['1hr', '2hr', '4hr', '8hr', '24hr'] as const;
 
@@ -69,6 +84,8 @@ export default function SettingsPage() {
   const [cookiePool, setCookiePool] = useState<CookiePoolStatus | null>(null);
   const [cookieSaving, setCookieSaving] = useState(false);
   const [cookieMsg, setCookieMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [trafficSources, setTrafficSources] = useState<TrafficSourceRow[]>([]);
+  const [trafficToggleBusy, setTrafficToggleBusy] = useState<string | null>(null);
   const providerSynced = useRef(false);
 
   const refreshConcurrency = useCallback(async () => {
@@ -80,6 +97,14 @@ export default function SettingsPage() {
     try {
       const res = await backendFetch('/api/cookies/status', { headers: getAuthHeaders() });
       if (res.ok) setCookiePool(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  const refreshTrafficSources = useCallback(async () => {
+    try {
+      const s = await fetchTrafficSourceStatus();
+      setTrafficSources(s.sources);
+      setSettings((prev) => ({ ...prev, disabledTrafficSources: s.disabled }));
     } catch { /* ignore */ }
   }, []);
 
@@ -107,10 +132,11 @@ export default function SettingsPage() {
       }
       await refreshConcurrency();
       await refreshCookieStatus();
+      await refreshTrafficSources();
     })();
     const t = setInterval(refreshConcurrency, 10000);
     return () => clearInterval(t);
-  }, [browserProvider, setBrowserProvider, refreshConcurrency, refreshCookieStatus]);
+  }, [browserProvider, setBrowserProvider, refreshConcurrency, refreshCookieStatus, refreshTrafficSources]);
 
   const update = <K extends keyof AppSettings>(key: K, val: AppSettings[K]) => {
     setSettings((s) => ({ ...s, [key]: val }));
@@ -216,11 +242,20 @@ export default function SettingsPage() {
     <div className="flex flex-col h-full">
       <div className="px-6 py-4 border-b border-gray-800 bg-gray-950/50 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Settings</h1>
-            <p className="text-gray-500 text-sm mt-0.5">
-              System config — saved to <span className="font-mono text-gray-400">user-settings.json</span> + browser backup
-            </p>
+          <div className="flex items-center gap-3">
+            <div style={{
+              width: 44, height: 44, borderRadius: 13, flexShrink: 0,
+              background: 'var(--mmb-grad)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 8px 22px var(--mmb-accent-glow)',
+            }}>
+              <Server size={22} color="#fff" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold"><span className="mmb-gradient-text">Settings</span></h1>
+              <p className="text-gray-500 text-sm mt-0.5">
+                System config — saved to <span className="font-mono text-gray-400">user-settings.json</span> + browser backup
+              </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {backendStatus === 'ok' && <span className="text-xs text-green-400">● Backend synced</span>}
@@ -826,6 +861,126 @@ export default function SettingsPage() {
           )}
         </Section>
 
+        {/* AI Models — Tiered (Haiku / Sonnet / Opus) */}
+        <Section title="AI Models — Tiered (Haiku · Sonnet · Opus)" icon={<Zap size={15} className="text-violet-400" />} note="Simple kaam sasta model (Haiku), hard kaam powerful model (Sonnet/Opus). Cost + power balance — switch anytime.">
+          <div className="space-y-4">
+            <label className="flex items-center justify-between gap-2 text-sm text-gray-300 cursor-pointer bg-gray-800/40 border border-gray-700/50 rounded-xl px-4 py-3">
+              <span>
+                <span className="font-semibold">Tiered routing</span>
+                <span className="block text-xs text-gray-500 mt-0.5">ON = har task apne tier ka model use karega · OFF = sab ek default model</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.aiTieredModelsEnabled === true || settings.aiTieredModelsEnabled === 'true' || settings.aiTieredModelsEnabled === undefined}
+                onChange={(e) => update('aiTieredModelsEnabled', e.target.checked)}
+                className="rounded border-gray-600 w-4 h-4"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {([
+                { key: 'aiModelHaiku'  as const, tier: 'Simple',   icon: '🟢', color: 'text-green-400',  def: 'claude-haiku-4-5',  use: 'keywords · watch pattern · comments' },
+                { key: 'aiModelSonnet' as const, tier: 'Balanced', icon: '🔵', color: 'text-blue-400',   def: 'claude-sonnet-4-5', use: 'vision · element find · error · ad-skip' },
+                { key: 'aiModelOpus'   as const, tier: 'Powerful', icon: '🟣', color: 'text-violet-400', def: 'claude-opus-4-5',   use: 'selector heal · hard popups · strategy' },
+              ]).map(m => (
+                <div key={m.key} className="bg-gray-900 border border-gray-700 rounded-xl p-3">
+                  <div className={`text-xs font-bold uppercase tracking-wider ${m.color} mb-2 flex items-center gap-1.5`}>{m.icon} {m.tier}</div>
+                  <select
+                    value={(settings[m.key] as string) || m.def}
+                    onChange={(e) => update(m.key, e.target.value)}
+                    className="w-full bg-gray-950 border border-gray-700 text-gray-200 rounded-lg px-2.5 py-2 text-xs cursor-pointer"
+                  >
+                    {AI_MODEL_OPTIONS.map(opt => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-gray-600 mt-1.5">{m.use}</p>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <label className="text-gray-400 text-xs block mb-1.5">Default model (jab tiered routing OFF ho — sab isi pe)</label>
+              <select
+                value={settings.aiModelDefault || 'claude-haiku-4-5'}
+                onChange={(e) => update('aiModelDefault', e.target.value)}
+                className="w-full bg-gray-900 border border-gray-700 text-gray-200 rounded-xl px-3 py-2.5 text-sm cursor-pointer"
+              >
+                {AI_MODEL_OPTIONS.map(opt => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <p className="text-[11px] text-gray-600">Dropdown se model choose karo · Save ke baad turant apply ho jayega.</p>
+          </div>
+        </Section>
+
+        {/* AI Features — on/off (credit saver) */}
+        <Section title="AI Features (on / off)" icon={<Brain size={15} className="text-emerald-400" />} note="OFF karoge to AI credit nahi lagega — wahi feature simple/template tarike se chalega.">
+          <div className="space-y-2.5">
+            {([
+              {
+                key: 'aiProfileMemoryEnabled' as const,
+                label: 'Per-Profile Memory',
+                on:  'Har profile yaad rakhe kya kiya (channels, comments) → repeat na ho, natural lage',
+                off: 'OFF: memory off (no AI credit on memory)',
+              },
+            ]).map(f => {
+              const isOn = settings[f.key] === true || settings[f.key] === 'true' || settings[f.key] === undefined;
+              return (
+                <div key={f.key} className="flex items-center justify-between gap-3 bg-gray-800/40 border border-gray-700/50 rounded-xl px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-200 font-medium">{f.label}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{isOn ? f.on : f.off}</div>
+                  </div>
+                  <label className="mmb-toggle flex-shrink-0">
+                    <input type="checkbox" checked={isOn} onChange={(e) => update(f.key, e.target.checked)} />
+                    <span className="mmb-toggle-slider" />
+                  </label>
+                </div>
+              );
+            })}
+            <p className="text-[11px] text-gray-600">💡 In dono ka backend ready hai — sirf toggle se control karo. Critical action (comment submit) hamesha verify hota hai, AI ho ya na ho.</p>
+          </div>
+        </Section>
+
+        {/* Upcoming AI features — Coming Soon (visible placeholders) */}
+        <Section title="Upcoming AI Features" icon={<Brain size={15} className="text-pink-400" />} note="Ye features abhi aa rahe hain — turn-on baad mein milega.">
+          <div className="space-y-2.5">
+            {([
+              {
+                label: 'Vision-first Ad-Skip',
+                desc: 'AI ko ad ka screenshot diya jayega — "skip button kahan hai, x/y coordinate de". Jab normal selector fail ho, AI pixel-level pe button dhundh ke skip karega. (Tera ad-skip wala problem isi se solve hoga.)',
+                red: false,
+              },
+              {
+                label: 'AI Watch Director',
+                desc: 'AI har session khud decide karega — kitna dekhe, kab pause kare, kab comment kare, kab scroll kare — taaki har profile ek alag insaan jaisa lage (bot-detection se bachne ke liye). Abhi jo ho raha hai wo sahi hai — ye sirf future zaroorat ke liye.',
+                red: true,
+              },
+              {
+                label: 'AI Persona Engine',
+                desc: 'Har profile ka ek full personality (age, interest, mood) jo uske saare actions drive kare — comments, search keywords, watch-time sab us persona ke hisaab se. Har profile genuinely alag banda lage.',
+                red: false,
+              },
+            ]).map(f => (
+              <div key={f.label} className="flex items-center justify-between gap-3 bg-gray-800/40 border border-gray-700/50 rounded-xl px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-gray-200 font-medium flex items-center gap-2">
+                    {f.label}
+                    {f.red && <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: 'var(--mmb-red-bg)', color: 'var(--mmb-red)' }}>Future</span>}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">{f.desc}</div>
+                </div>
+                <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full"
+                  style={{ background: f.red ? 'var(--mmb-red-bg)' : 'var(--mmb-yellow-bg)', color: f.red ? 'var(--mmb-red)' : 'var(--mmb-yellow)' }}>
+                  Coming Soon
+                </span>
+              </div>
+            ))}
+          </div>
+        </Section>
+
         {/* Window Resolution */}
         <Section title="Browser Window Resolution" icon={<Maximize2 size={15} className="text-indigo-400" />} note="Controls profile window size and fingerprint screen resolution — applied when windows auto-arrange">
           <div className="space-y-4">
@@ -929,6 +1084,56 @@ export default function SettingsPage() {
             )}
             <p className="text-xs text-gray-500">After warmup searches, the agent still finds and verifies the exact video as normal. Direct URL fallback remains last resort only.</p>
           </div>
+        </Section>
+
+        {/* Traffic source master switches */}
+        <Section
+          title="Traffic Sources (Temporary ON/OFF)"
+          icon={<Globe size={15} className="text-sky-400" />}
+          note="Band karo kisi bhi source ko temporarily — Engagement, Shuffle, Fleet, Future Agent sab pe lagta hai. Random mix sirf enabled sources use karega."
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(trafficSources.length ? trafficSources : TRAFFIC_SOURCE_DEFS.map(d => ({
+              id: d.id, label: d.label, enabled: true,
+            }))).map((row) => {
+              const def = TRAFFIC_SOURCE_DEFS.find(d => d.id === row.id);
+              return (
+                <div
+                  key={row.id}
+                  className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border ${
+                    row.enabled ? 'bg-gray-800/50 border-gray-700' : 'bg-red-950/30 border-red-800/40'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className={`text-sm font-medium ${row.enabled ? 'text-white' : 'text-red-300'}`}>
+                      {def?.emoji ?? '🌐'} {row.label}
+                    </p>
+                    <p className="text-[10px] text-gray-500 truncate">{row.id}</p>
+                  </div>
+                  <ToggleSwitch
+                    enabled={row.enabled}
+                    onChange={async (on) => {
+                      setTrafficToggleBusy(String(row.id));
+                      try {
+                        const res = await toggleTrafficSource(String(row.id), on);
+                        setTrafficSources(res.sources);
+                        setSettings((prev) => ({ ...prev, disabledTrafficSources: res.disabled }));
+                      } catch { /* ignore */ }
+                      setTrafficToggleBusy(null);
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          {trafficToggleBusy && (
+            <p className="text-xs text-gray-500 mt-2">Updating {trafficToggleBusy}…</p>
+          )}
+          {(settings.disabledTrafficSources?.length ?? 0) > 0 && (
+            <p className="text-xs text-amber-400/90 mt-2">
+              Disabled: {settings.disabledTrafficSources!.join(', ')} — runs will auto-fallback to enabled sources.
+            </p>
+          )}
         </Section>
 
         {/* Real Cookie Pool */}

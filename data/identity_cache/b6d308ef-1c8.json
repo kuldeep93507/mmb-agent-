@@ -1,0 +1,18 @@
+{
+  "profile_id": "b6d308ef-1c88-4dbe-b9cb-e423e00dc9cc",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Kingman",
+  "timezone": "America/Phoenix",
+  "lat": 35.1328,
+  "lon": -113.7033,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 852761583,
+  "canvas_noise": 0.003065,
+  "webgl_noise": 0.002504,
+  "audio_noise": 6.531e-05,
+  "cached_at": 1781182819.9299886
+}

@@ -27,6 +27,31 @@ export default function CommentTemplatesPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Smart Comments (AI) on/off — controls aiCommentQualityEnabled setting ──
+  const [smartComments, setSmartComments] = useState(true);
+
+  useEffect(() => {
+    void backendFetch('/api/settings')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.settings) {
+          const v = d.settings.aiCommentQualityEnabled;
+          setSmartComments(v === undefined ? true : (v === true || v === 'true'));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleSmartComments = async (on: boolean) => {
+    setSmartComments(on);
+    try {
+      await backendFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiCommentQualityEnabled: on }),
+      });
+    } catch { /* ignore — local state already set */ }
+  };
 
   useEffect(() => {
     void hydrateCommentsFromServer().then(() => {
@@ -153,6 +178,26 @@ export default function CommentTemplatesPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {/* Smart Comments (AI) on/off */}
+        <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+          style={{ background: 'var(--mmb-grad-soft)', border: '1px solid var(--mmb-border)' }}>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Sparkles size={16} className="text-purple-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold" style={{ color: 'var(--mmb-text)' }}>Smart Comments (AI)</div>
+              <div className="text-xs" style={{ color: 'var(--mmb-muted)' }}>
+                {smartComments
+                  ? 'ON: video title + description + top-comments padh ke human-jaisa relevant comment'
+                  : 'OFF: sirf ye templates use honge (no AI credit)'}
+              </div>
+            </div>
+          </div>
+          <label className="mmb-toggle flex-shrink-0">
+            <input type="checkbox" checked={smartComments} onChange={(e) => void toggleSmartComments(e.target.checked)} />
+            <span className="mmb-toggle-slider" />
+          </label>
+        </div>
+
         {/* Add Single */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="flex gap-2">

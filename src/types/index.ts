@@ -91,7 +91,8 @@ export type LogSource =
   | 'settings'
   | 'system'
   | 'yt-agent'
-  | 'engagement';
+  | 'engagement'
+  | 'mastermind';
 
 export interface LogEntry {
   id: string;

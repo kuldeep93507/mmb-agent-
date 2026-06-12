@@ -1,0 +1,18 @@
+{
+  "profile_id": "f09c96d4-8872-4eb0-8965-a57d20cdeadd",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Aliquippa",
+  "timezone": "America/New_York",
+  "lat": 40.6367,
+  "lon": -80.2401,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 2262780339,
+  "canvas_noise": 0.003973,
+  "webgl_noise": 0.001291,
+  "audio_noise": 7.253e-05,
+  "cached_at": 1781053885.2722707
+}

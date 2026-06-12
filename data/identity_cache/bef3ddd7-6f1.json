@@ -1,0 +1,18 @@
+{
+  "profile_id": "bef3ddd7-6f12-4f0a-8d70-df15ddffcfda",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Batavia",
+  "timezone": "America/New_York",
+  "lat": 39.077,
+  "lon": -84.1769,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 821885561,
+  "canvas_noise": 0.00564,
+  "webgl_noise": 0.00154,
+  "audio_noise": 6.913e-05,
+  "cached_at": 1781182664.0646405
+}

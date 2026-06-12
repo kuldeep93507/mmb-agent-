@@ -18,7 +18,10 @@ import MonitorPage from './components/MonitorPage';
 import EngagementPage from './components/EngagementPage';
 import GmailSetupPage from './components/GmailSetupPage';
 import ProxySettingsPage from './components/ProxySettingsPage';
-import RecyclePage from './components/RecyclePage';
+import SelectorHealthPage from './components/SelectorHealthPage';
+import FleetPage from './components/FleetPage';
+import NotificationHubPage from './components/NotificationHubPage';
+import FutureAutonomousAgentPage from './components/FutureAutonomousAgentPage';
 import SplashScreen from './components/SplashScreen';
 import { useStore } from './store/useStore';
 import { isPackagedElectron } from './utils/appMode';
@@ -116,7 +119,8 @@ export default function App() {
             browserProvider={browserProvider}
             loading={loading}
             recreatingIds={recreatingIds}
-            onCreateProfile={(os: OS, proxyType?: string, profileMode?: string, androidDevice?: string) => createProfile(os, proxyType, profileMode, androidDevice)}
+            onCreateProfile={(os, proxyType, profileMode, androidDevice, resolution, profileName) =>
+              createProfile(os, proxyType, profileMode, androidDevice, resolution, profileName)}
             onStartProfile={startProfile}
             onStopProfile={stopProfile}
             onDeleteProfile={deleteProfile}
@@ -165,7 +169,16 @@ export default function App() {
       case 'scheduler':
         return <SchedulerPage profiles={profiles} channels={channelStore.channels} getVideos={channelStore.getVideos} />;
       case 'video-shuffle':
-        return <VideoShufflePage profiles={profiles} channels={channelStore.channels} getVideos={channelStore.getVideos} onRefreshProfiles={() => fetchProfiles()} />;
+        return (
+          <VideoShufflePage
+            profiles={profiles}
+            channels={channelStore.channels}
+            getVideos={channelStore.getVideos}
+            addManualVideo={channelStore.addManualVideo}
+            addChannel={channelStore.addChannel}
+            onRefreshProfiles={() => fetchProfiles()}
+          />
+        );
       case 'backlinks':
         return <BacklinkPoolPage profiles={profiles} />;
       case 'manual':
@@ -175,9 +188,16 @@ export default function App() {
       case 'comments':
         return <CommentTemplatesPage />;
       case 'engagement':
-        return <EngagementPage profiles={profiles} channels={channelStore.channels} getVideos={channelStore.getVideos} setActiveTab={setActiveTab} />;
-      case 'recycle':
-        return <RecyclePage />;
+        return (
+          <EngagementPage
+            profiles={profiles}
+            channels={channelStore.channels}
+            getVideos={channelStore.getVideos}
+            addManualVideo={channelStore.addManualVideo}
+            addChannel={channelStore.addChannel}
+            setActiveTab={setActiveTab}
+          />
+        );
       case 'gmail-setup':
         return <GmailSetupPage profiles={profiles} />;
       case 'proxy':
@@ -186,6 +206,31 @@ export default function App() {
         return <LogsPage profiles={profiles} onClear={clearLogs} />;
       case 'settings':
         return <SettingsPage />;
+      case 'selector-health':
+        return <SelectorHealthPage />;
+      case 'future-agent':
+        return (
+          <FutureAutonomousAgentPage
+            profiles={profiles}
+            channels={channelStore.channels}
+            getVideos={channelStore.getVideos}
+          />
+        );
+      case 'fleet':
+        return (
+          <FleetPage
+            channels={channelStore.channels}
+            getVideos={channelStore.getVideos}
+          />
+        );
+      case 'notification-hub':
+        return (
+          <NotificationHubPage
+            profiles={profiles}
+            channels={channelStore.channels}
+            getVideos={channelStore.getVideos}
+          />
+        );
       default:
         return <Dashboard profiles={profiles} setActiveTab={setActiveTab} />;
     }
@@ -202,6 +247,7 @@ export default function App() {
           runningCount={runningCount}
           pendingJobs={pendingJobs}
           activeChannels={activeChannelsCount}
+          profiles={profiles}
         />
         <main className="flex-1 overflow-hidden flex flex-col">
           <TopBar profiles={profiles} logs={logs} activeTab={activeTab} newVideoCount={videoMonitor.unreadCount} />

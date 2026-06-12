@@ -9,7 +9,7 @@
     "dev": "vite --host",
     "server": "python server_python/main.py",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
-    "build": "vite build",
+    "build": "vite build && node -e \"const fs=require('fs');fs.copyFileSync('dist/index.html','MMB-Agent.html');console.log('Built → dist/index.html + MMB-Agent.html');\"",
     "preview": "vite preview",
     "test": "python -m pytest tests/ -q"
   },

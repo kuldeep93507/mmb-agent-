@@ -31,7 +31,7 @@ const RESOLUTION_OPTIONS_MOBILE = [
 interface NewProfileModalProps {
   onClose: () => void;
   activeProvider?: ActiveProvider;
-  onCreate: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string) => Promise<{ code: number; message?: string }>;
+  onCreate: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string, profileName?: string) => Promise<{ code: number; message?: string }>;
 }
 
 const FALLBACK_ANDROID = [
@@ -92,6 +92,7 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
   }, []);
   const [androidDevice, setAndroidDevice] = useState<string>('auto');
   const [resolution, setResolution] = useState<string>('1920x1080');
+  const [profileNameBase, setProfileNameBase] = useState('');
   const [count, setCount] = useState(1);
 
   // Switch default resolution when OS changes (mobile vs desktop pools)
@@ -186,10 +187,14 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
     let done = progress?.done ?? 0;
     const deviceArg = selectedOS === 'Android' && androidDevice !== 'auto' ? androidDevice : undefined;
     const failed: number[] = [];
+    const baseName = profileNameBase.trim().replace(/[^\w\s\-_.]/g, '').slice(0, 48);
 
     for (const i of indices) {
       try {
-        const result = await onCreate(selectedOS, proxyType, profileMode, deviceArg, resolution);
+        const nameArg = baseName
+          ? (count > 1 ? `${baseName}_${String(i + 1).padStart(2, '0')}` : baseName)
+          : undefined;
+        const result = await onCreate(selectedOS, proxyType, profileMode, deviceArg, resolution, nameArg);
         if (result.code === 0) {
           done++;
           setProgress({ done, total: count, errors: [...errors] });
@@ -453,7 +458,27 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
                 </div>
               </div>
 
-              {/* ── STEP 4: Count ── */}
+              {/* ── STEP 4: Profile name ── */}
+              <div>
+                <p className="text-white font-semibold text-sm mb-2">{stepNum++}️⃣ Profile name</p>
+                <input
+                  type="text"
+                  value={profileNameBase}
+                  onChange={e => setProfileNameBase(e.target.value)}
+                  placeholder="e.g. Gmail-US-01 (khali = auto Profile_001, Profile_002…)"
+                  maxLength={48}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-red-500 placeholder:text-gray-600"
+                />
+                <p className="text-[10px] text-gray-500 mt-1.5">
+                  {profileNameBase.trim()
+                    ? count > 1
+                      ? `Banega: ${profileNameBase.trim()}_01, ${profileNameBase.trim()}_02 …`
+                      : `Banega: ${profileNameBase.trim()}`
+                    : 'Auto serial name — Profile_001, Profile_002, …'}
+                </p>
+              </div>
+
+              {/* ── STEP 5: Count ── */}
               <div>
                 <p className="text-white font-semibold text-sm mb-3">{stepNum++}️⃣ How many profiles?</p>
                 <div className="flex items-center gap-3">
@@ -481,6 +506,7 @@ export default function NewProfileModal({ onClose, onCreate, activeProvider = 'm
               {selectedOS && (
                 <div className="rounded-xl bg-gray-800/60 border border-gray-700 px-4 py-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
                   <span>🖥️ <span className="text-white font-medium">{selectedOS}</span>{selectedOS === 'Android' && androidDevice !== 'auto' ? ` · ${androidDevice.split(' ').slice(-2).join(' ')}` : ''}</span>
+                  <span>🏷️ <span className="text-white font-medium">{profileNameBase.trim() || 'Auto name'}</span></span>
                   <span>📐 <span className="text-white font-medium font-mono">{resolution === 'auto' ? 'Auto' : resolution}</span></span>
                   <span>{profileMode === 'cloud' ? '☁️' : '⚡'} <span className="text-white font-medium">{profileMode === 'cloud' ? 'Cloud' : 'Quick/Local'}</span></span>
                   <span>🌐 <span className="text-white font-medium">{proxyType === 'smartproxy' ? 'SmartProxy (US)' : 'Multilogin Proxy (US/UK)'}</span></span>

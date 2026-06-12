@@ -12,6 +12,7 @@ import {
   fetchAnalytics, exportAnalyticsJson, formatWatchTime,
   type AnalyticsResponse, type AnalyticsTimeFilter,
 } from '../utils/analyticsApi';
+import { getAllGmailProfiles } from '../utils/gmailProfileStore';
 import { PageShell, PageHeader, Card, CardHeader, Badge, Btn } from './ui';
 
 interface AnalyticsPageProps { profiles: Profile[]; setActiveTab?: (tab: string) => void; }
@@ -83,6 +84,26 @@ export default function AnalyticsPage({ profiles, setActiveTab }: AnalyticsPageP
     { label:'Channel',  value:data?.trafficChannel||0,  color:'#22c55e' },
     { label:'Backlink', value:data?.trafficBacklink||0, color:'#ec4899' },
   ].filter(r=>r.value>0).sort((a,b)=>b.value-a.value);
+
+  // Per-profile daily report — ONLY Gmail-tagged profiles (user request).
+  const gmailReports = useMemo(() => {
+    const gmail = getAllGmailProfiles();
+    const ppd = data?.perProfileDaily || {};
+    return Object.entries(gmail)
+      .filter(([, g]) => g.isGmail)
+      .map(([id, g]) => {
+        const p = profileById.get(id);
+        const days = ppd[id] || [];
+        const totals = days.reduce((acc, d) => ({
+          views: acc.views + d.views, watchTime: acc.watchTime + d.watchTime,
+          likes: acc.likes + d.likes, subscribes: acc.subscribes + d.subscribes,
+          comments: acc.comments + d.comments, ads: acc.ads + d.ads,
+          adsSkipped: acc.adsSkipped + d.adsSkipped,
+        }), { views:0, watchTime:0, likes:0, subscribes:0, comments:0, ads:0, adsSkipped:0 });
+        return { id, name: p?.name || `${id.slice(0,12)}…`, email: g.email, status: p?.status || 'idle', days, totals };
+      })
+      .sort((a,b) => b.totals.views - a.totals.views);
+  }, [data, profileById]);
 
   return (
     <PageShell>
@@ -308,6 +329,66 @@ export default function AnalyticsPage({ profiles, setActiveTab }: AnalyticsPageP
               <button disabled={page>=pageCount-1} onClick={()=>setPage(p=>p+1)} style={{ padding:'4px 12px', borderRadius:6, border:'1px solid var(--mmb-border)', background:'var(--mmb-surface)', color:'var(--mmb-text)', fontSize:12, cursor:'pointer', opacity:page>=pageCount-1?.4:1 }}>Next →</button>
             </div>
           )}
+        </Card>
+
+        {/* Per-Gmail-profile DAILY report */}
+        <Card>
+          <CardHeader title={`📒 Gmail Profile — Daily Report (${gmailReports.length})`}
+            action={<span style={{ fontSize:11, color:'var(--mmb-muted)' }}>Sirf Gmail profiles · din-by-din</span>} />
+          <div style={{ padding:'14px 16px', display:'flex', flexDirection:'column', gap:14 }}>
+            {gmailReports.length===0 ? (
+              <div style={{ textAlign:'center', padding:'24px', color:'var(--mmb-muted)', fontSize:13 }}>
+                Koi Gmail profile tag nahi hai. Profiles page mein kisi profile ko Gmail tag karo.
+              </div>
+            ) : gmailReports.map(rep => (
+              <div key={rep.id} className="mmb-card" style={{ padding:0, overflow:'hidden' }}>
+                {/* profile header */}
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8,
+                  padding:'10px 14px', background:'var(--mmb-grad-soft)', borderBottom:'1px solid var(--mmb-border)' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:9, minWidth:0 }}>
+                    <span style={{ width:8, height:8, borderRadius:'50%', flexShrink:0,
+                      background: rep.status==='running'?'var(--mmb-green)':'var(--mmb-border2)' }}/>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontWeight:700, color:'var(--mmb-text)', fontSize:13 }}>{rep.name}</div>
+                      {rep.email && <div style={{ fontSize:11, color:'var(--mmb-muted)', overflow:'hidden', textOverflow:'ellipsis' }}>{rep.email}</div>}
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', gap:14, fontSize:11, color:'var(--mmb-muted)', flexShrink:0 }}>
+                    <span>📺 <strong style={{ color:'var(--mmb-text2)' }}>{rep.totals.views}</strong> vids</span>
+                    <span>⏱ <strong style={{ color:'var(--mmb-text2)' }}>{formatWatchTime(Math.round(rep.totals.watchTime))}</strong></span>
+                    <span>👍 <strong style={{ color:'var(--mmb-text2)' }}>{rep.totals.likes}</strong></span>
+                    <span>📺 <strong style={{ color:'var(--mmb-text2)' }}>{rep.totals.subscribes}</strong></span>
+                    <span>💬 <strong style={{ color:'var(--mmb-text2)' }}>{rep.totals.comments}</strong></span>
+                    <span>📢 <strong style={{ color:'var(--mmb-text2)' }}>{rep.totals.ads}</strong> ads</span>
+                  </div>
+                </div>
+                {/* daily rows */}
+                {rep.days.length===0 ? (
+                  <div style={{ padding:'14px', textAlign:'center', color:'var(--mmb-muted)', fontSize:12 }}>Is period mein koi activity nahi.</div>
+                ) : (
+                  <table className="mmb-table">
+                    <thead><tr>
+                      <th>Date</th><th>Videos</th><th>Watch</th><th>Likes</th><th>Subs</th><th>Comments</th><th>Ads</th><th>Skipped</th>
+                    </tr></thead>
+                    <tbody>
+                      {rep.days.map(d => (
+                        <tr key={d.date}>
+                          <td style={{ fontWeight:600, color:'var(--mmb-text)' }}>{d.date}</td>
+                          <td><strong style={{ color:'var(--mmb-accent)' }}>{d.views}</strong></td>
+                          <td style={{ color:'var(--mmb-blue)' }}>{formatWatchTime(Math.round(d.watchTime))}</td>
+                          <td style={{ color:'var(--mmb-red)' }}>❤ {d.likes}</td>
+                          <td style={{ color:'var(--mmb-yellow)' }}>🔔 {d.subscribes}</td>
+                          <td style={{ color:'var(--mmb-green)' }}>💬 {d.comments}</td>
+                          <td>{d.ads}</td>
+                          <td style={{ color:'var(--mmb-muted)' }}>{d.adsSkipped}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            ))}
+          </div>
         </Card>
 
         {/* Recent activity */}

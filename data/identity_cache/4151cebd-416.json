@@ -1,0 +1,18 @@
+{
+  "profile_id": "4151cebd-4166-4efa-9d76-f4a2844eed15",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Henderson",
+  "timezone": "America/Los_Angeles",
+  "lat": 36.1091,
+  "lon": -114.9206,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1645862134,
+  "canvas_noise": 0.006362,
+  "webgl_noise": 0.003273,
+  "audio_noise": 1.545e-05,
+  "cached_at": 1781053992.7548482
+}

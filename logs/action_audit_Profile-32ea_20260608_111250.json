@@ -1,0 +1,72 @@
+{
+  "profile_id": "c58a40dc-d6ff-4234-8d26-a592804d32ea",
+  "profile_name": "Profile-32ea",
+  "login_state": true,
+  "saved_at": "2026-06-08T05:42:50Z",
+  "truth_table": [
+    {
+      "action": "autoplay_off",
+      "pass": true,
+      "clicked": true,
+      "reason": "UI_VERIFIED visible toggle off"
+    },
+    {
+      "action": "volume_75",
+      "pass": false,
+      "clicked": false,
+      "reason": "slider=75% target=75% | player_api_not_found"
+    },
+    {
+      "action": "description_expand",
+      "pass": true,
+      "clicked": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand"
+    },
+    {
+      "action": "description_link",
+      "pass": false,
+      "clicked": false,
+      "reason": "no_desc_links_for_hamstercombocard.com"
+    }
+  ],
+  "entries": [
+    {
+      "action": "LOGIN_STATE",
+      "verified": true,
+      "reason": "logged_in",
+      "ts": 1780897032.935663
+    },
+    {
+      "action": "autoplay_off",
+      "selector": "button.ytp-autonav-toggle",
+      "clicked": true,
+      "verified": true,
+      "reason": "UI_VERIFIED visible toggle off",
+      "ts": 1780897032.9516091
+    },
+    {
+      "action": "volume_75",
+      "selector": ".ytp-volume-panel slider CDP click",
+      "clicked": false,
+      "verified": false,
+      "reason": "slider=75% target=75% | player_api_not_found",
+      "ts": 1780897039.519177
+    },
+    {
+      "action": "description_expand",
+      "selector": "tp-yt-paper-button#expand",
+      "clicked": true,
+      "verified": true,
+      "reason": "VERIFIED expanded sel=tp-yt-paper-button#expand",
+      "ts": 1780897114.999274
+    },
+    {
+      "action": "description_link",
+      "selector": "#description a[href] target=https://hamstercombocard.com",
+      "clicked": false,
+      "verified": false,
+      "reason": "no_desc_links_for_hamstercombocard.com",
+      "ts": 1780897123.7870646
+    }
+  ]
+}

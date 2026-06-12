@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Settings, Tv, Calendar, Gamepad2, BarChart3,
   MessageSquare, Shuffle, Link, MonitorPlay, Zap, FileText,
-  Cpu, Mail, Server, Shield, RefreshCw,
+  Cpu, Mail, Server, Shield, Wrench, Bot, Network, Bell,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { backendFetch } from '../services/backendOrigin';
@@ -12,21 +12,24 @@ const NAV_ITEMS = [
     { id: 'scheduler',    label: 'Scheduler',     icon: Calendar },
     { id: 'profiles',     label: 'Profiles',      icon: Users },
     { id: 'video-shuffle',label: 'Video Shuffle', icon: Shuffle },
+    { id: 'fleet',        label: 'Fleet Control', icon: Network },
   ]},
   { group: 'AUTOMATION', items: [
     { id: 'analytics',    label: 'Analytics',     icon: BarChart3 },
     { id: 'engagement',   label: 'Engagement',    icon: Zap },
-    { id: 'recycle',      label: 'Recycle Control',icon: RefreshCw },
+    { id: 'notification-hub', label: 'Notification Hub', icon: Bell },
     { id: 'channels',     label: 'Channels',      icon: Tv },
     { id: 'backlinks',    label: 'Backlinks',     icon: Link },
     { id: 'comments',     label: 'Comments',      icon: MessageSquare },
     { id: 'monitor',      label: 'Live Monitor',  icon: MonitorPlay },
+    { id: 'future-agent', label: 'Future Agent',  icon: Bot },
   ]},
   { group: 'SYSTEM', items: [
     { id: 'manual',       label: 'Manual Control',icon: Gamepad2 },
     { id: 'jobs',         label: 'Job Queue',     icon: Cpu },
     { id: 'gmail-setup',  label: 'Gmail Setup',   icon: Mail },
     { id: 'proxy',        label: 'Proxy Settings',icon: Shield },
+    { id: 'selector-health', label: 'Selector Healing', icon: Wrench },
     { id: 'logs',         label: 'Activity Logs', icon: FileText },
     { id: 'settings',     label: 'Settings',      icon: Settings },
   ]},
@@ -38,9 +41,10 @@ interface SidebarProps {
   runningCount: number;
   pendingJobs: number;
   activeChannels?: number;
+  profiles?: { id: string }[];
 }
 
-export default function Sidebar({ activeTab, setActiveTab, runningCount, pendingJobs, activeChannels = 0 }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, runningCount, pendingJobs, activeChannels = 0, profiles = [] }: SidebarProps) {
   const [multiloginStatus, setMultiloginStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [backendStatus, setBackendStatus] = useState<'checking' | 'running' | 'down'>('checking');
   const [collapsed, setCollapsed] = useState(false);
@@ -70,7 +74,7 @@ export default function Sidebar({ activeTab, setActiveTab, runningCount, pending
     return () => clearInterval(interval);
   }, []);
 
-  const totalProfiles = 50; // fixed fleet size
+  const totalProfiles = profiles.length;
 
   const getBadge = (id: string) => {
     if (id === 'monitor' && runningCount > 0) return { count: runningCount, color: 'green' };
@@ -99,10 +103,10 @@ export default function Sidebar({ activeTab, setActiveTab, runningCount, pending
       <div style={{ padding: collapsed ? '16px 12px' : '16px 16px', borderBottom: '1px solid var(--mmb-border)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
-            width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-            background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+            width: 38, height: 38, borderRadius: 11, flexShrink: 0,
+            background: 'var(--mmb-grad)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(79,70,229,.35)',
+            boxShadow: '0 6px 18px var(--mmb-accent-glow)',
           }}>
             <span style={{ color: '#fff', fontWeight: 900, fontSize: 11, letterSpacing: '-.5px' }}>MMB</span>
           </div>
@@ -211,7 +215,7 @@ export default function Sidebar({ activeTab, setActiveTab, runningCount, pending
             <div style={{ height: 4, background: 'var(--mmb-border)', borderRadius: 99, overflow: 'hidden' }}>
               <div style={{
                 height: '100%', borderRadius: 99,
-                background: 'linear-gradient(90deg, var(--mmb-accent), #7c3aed)',
+                background: 'var(--mmb-grad)',
                 width: `${(runningCount / totalProfiles) * 100}%`,
                 transition: 'width .4s ease',
               }} />

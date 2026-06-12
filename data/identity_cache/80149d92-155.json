@@ -1,0 +1,18 @@
+{
+  "profile_id": "80149d92-155e-4adf-9ef3-1ebfd3687eea",
+  "country_code": "US",
+  "country": "United States",
+  "city": "Dublin",
+  "timezone": "America/New_York",
+  "lat": 40.0982,
+  "lon": -83.158,
+  "language": "en-US",
+  "accept_language": "en-US,en;q=0.9",
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "noise_seed": 1322456579,
+  "canvas_noise": 0.001307,
+  "webgl_noise": 0.00486,
+  "audio_noise": 7.177e-05,
+  "cached_at": 1781182728.5212598
+}

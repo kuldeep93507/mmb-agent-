@@ -1,0 +1,58 @@
+{
+  "profile_id": "c58a40dc-d6ff-4234-8d26-a592804d32ea",
+  "profile_name": "Profile-32ea",
+  "login_state": true,
+  "saved_at": "2026-06-08T07:31:23Z",
+  "truth_table": [
+    {
+      "action": "autoplay_off",
+      "pass": true,
+      "clicked": true,
+      "reason": "UI_VERIFIED visible toggle off"
+    },
+    {
+      "action": "quality_480p",
+      "pass": false,
+      "clicked": false,
+      "reason": "FAILED after 4 attempts"
+    },
+    {
+      "action": "volume_75",
+      "pass": false,
+      "clicked": false,
+      "reason": "slider=75% target=75% | player_api_not_found"
+    }
+  ],
+  "entries": [
+    {
+      "action": "LOGIN_STATE",
+      "verified": true,
+      "reason": "logged_in",
+      "ts": 1780903560.762917
+    },
+    {
+      "action": "autoplay_off",
+      "selector": "button.ytp-autonav-toggle",
+      "clicked": true,
+      "verified": true,
+      "reason": "UI_VERIFIED visible toggle off",
+      "ts": 1780903560.7723892
+    },
+    {
+      "action": "quality_480p",
+      "selector": "button.ytp-settings-button",
+      "clicked": false,
+      "verified": false,
+      "reason": "FAILED after 4 attempts",
+      "ts": 1780903572.562695
+    },
+    {
+      "action": "volume_75",
+      "selector": ".ytp-volume-panel slider CDP click",
+      "clicked": false,
+      "verified": false,
+      "reason": "slider=75% target=75% | player_api_not_found",
+      "ts": 1780903575.4643152
+    }
+  ]
+}

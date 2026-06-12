@@ -265,7 +265,7 @@ interface ProfilesPageProps {
   loading?: boolean;
   recreatingIds?: Set<string>;
 
-  onCreateProfile: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string) => Promise<{ code: number; message?: string }>;
+  onCreateProfile: (os: OS, proxyType?: string, profileMode?: string, androidDevice?: string, resolution?: string, profileName?: string) => Promise<{ code: number; message?: string }>;
   onStartProfile: (id: string) => void;
   onStopProfile: (id: string) => void;
   onDeleteProfile: (id: string) => void;

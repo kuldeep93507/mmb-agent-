@@ -1,0 +1,20 @@
+[
+  {
+    "id": "m1780971947601",
+    "name": "laptop mmb",
+    "address": "127.0.0.1:3100",
+    "apiKey": "mmb-local-dev-2025"
+  },
+  {
+    "id": "m1780982649696",
+    "name": "old laptop hp",
+    "address": "192.168.1.43:3100",
+    "apiKey": "mmb-local-dev-2025"
+  },
+  {
+    "id": "m1781070415290",
+    "name": "dell laptop",
+    "address": "192.168.1.37:3100",
+    "apiKey": "mmb-local-dev-2025"
+  }
+]

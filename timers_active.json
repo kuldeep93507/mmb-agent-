@@ -1,0 +1,79 @@
+[
+  {
+    "id": "cpnkc7d1mq69odum",
+    "name": "mmb",
+    "nextRun": 1781195905328,
+    "repeat": "1hr",
+    "status": "active",
+    "schedule": {
+      "id": "cpnkc7d1mq69odum",
+      "name": "mmb",
+      "selectedProfiles": [
+        "a62f79b0-d46e-41cd-aa79-4186b142ffbe"
+      ],
+      "selectedChannels": [
+        2
+      ],
+      "assignmentMode": "same-all",
+      "sameForAll": [
+        {
+          "channelId": 2,
+          "channelName": "Ultra gta play ",
+          "videos": [
+            {
+              "mode": "url",
+              "value": "https://www.youtube.com/watch?v=6IWCOBanzSU",
+              "title": "FRANKLIN VS SPIDERMAN FAMILY ?? || indian bikes driving 3d @HeligamerSSS ",
+              "url": "https://www.youtube.com/watch?v=6IWCOBanzSU"
+            }
+          ]
+        }
+      ],
+      "perProfile": [
+        {
+          "profileId": "a62f79b0-d46e-41cd-aa79-4186b142ffbe",
+          "channelSelections": [
+            {
+              "channelId": 2,
+              "channelName": "Ultra gta play ",
+              "videos": []
+            }
+          ]
+        }
+      ],
+      "profileDelayMin": 5,
+      "profileDelayMax": 20,
+      "tabDelayMin": 30,
+      "tabDelayMax": 120,
+      "runMode": "scheduled",
+      "countdownMinutes": 15,
+      "scheduledTime": 1780987105328,
+      "repeatEnabled": true,
+      "repeatInterval": "1hr",
+      "status": "scheduled",
+      "createdAt": 1780987002142,
+      "lastRun": null,
+      "startedAt": null,
+      "progress": {
+        "total": 0,
+        "done": 0,
+        "failed": 0
+      },
+      "profileConfigs": [
+        {
+          "profileId": "a62f79b0-d46e-41cd-aa79-4186b142ffbe",
+          "browserType": "multilogin",
+          "watchTimeMin": 50,
+          "watchTimeMax": 60,
+          "videoQuality": "720p",
+          "adSkipEnabled": true,
+          "adSkipAfterSec": 29,
+          "midRollAdWaitSec": 60,
+          "humanEngagementEnabled": true,
+          "seekForwardMax": 2,
+          "seekForwardSec": 10
+        }
+      ]
+    }
+  }
+]

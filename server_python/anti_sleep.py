@@ -36,12 +36,42 @@ VISIBILITY_OVERRIDE_JS = """
     }, true);
   } catch (e) {}
   try {
+    var p = document.querySelector('#movie_player');
+    if (p && typeof p.getPlayerState === 'function' && typeof p.playVideo === 'function') {
+      var st = p.getPlayerState();
+      if (st === 2) { p.playVideo(); return 'yt_resume'; }
+    }
+  } catch (e) {}
+  try {
     var v = document.querySelector('video');
     if (v && v.paused && !v.ended && v.readyState >= 2) {
       v.play().catch(function() {});
+      return 'raw_resume';
     }
   } catch (e) {}
   return 'ok';
+})()
+"""
+
+# Lightweight check — wake loop calls this when another app has focus
+RESUME_PAUSED_VIDEO_JS = """
+(() => {
+  if (!location.href || location.href.indexOf('/watch') < 0) return 'not_watch';
+  try {
+    var p = document.querySelector('#movie_player');
+    if (p && typeof p.getPlayerState === 'function' && typeof p.playVideo === 'function') {
+      var st = p.getPlayerState();
+      if (st === 2) { p.playVideo(); return 'yt_resumed'; }
+      if (st === 1) return 'playing';
+    }
+  } catch (e) {}
+  try {
+    var v = document.querySelector('video');
+    if (!v || v.ended) return 'no_video';
+    if (!v.paused) return 'playing';
+    if (v.readyState >= 2) { v.play().catch(function(){}); return 'raw_resumed'; }
+  } catch (e) {}
+  return 'paused';
 })()
 """
 
@@ -53,7 +83,7 @@ class AntiSleepKeeper:
         self,
         *,
         log_fn: Callable[[str], None] | None = None,
-        wake_interval: float = 10.0,
+        wake_interval: float = 5.0,
     ) -> None:
         self._tab: Any = None
         self._browser: Any = None
@@ -62,7 +92,9 @@ class AntiSleepKeeper:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._wake_count = 0
+        self._resume_count = 0
         self._script_registered = False
+        self._watch_phase = False
 
     async def start(self, tab: Any, browser: Any = None) -> None:
         if self._running:
@@ -87,7 +119,7 @@ class AntiSleepKeeper:
             except asyncio.CancelledError:
                 pass
         self._task = None
-        self._log(f"[AntiSleep] Stopped | wake_ticks={self._wake_count}")
+        self._log(f"[AntiSleep] Stopped | wake_ticks={self._wake_count} resumes={self._resume_count}")
 
     async def on_page_load(self, reason: str = "navigation") -> None:
         """Re-apply overrides after tab.get() — new document may reset visibility."""
@@ -96,15 +128,24 @@ class AntiSleepKeeper:
         await self.inject_visibility()
         await self.set_lifecycle_active()
 
+    def set_watch_phase(self, active: bool) -> None:
+        """During video watch: lighter keep-alive (no constant mouse / tab steal)."""
+        self._watch_phase = bool(active)
+        self._interval = 22.0 if self._watch_phase else 8.0
+
     async def bring_to_foreground(self, reason: str = "") -> None:
-        """Activate tab + lifecycle before search/watch/critical actions."""
+        """Activate tab + lifecycle before search/navigation — skip during passive watch."""
         if not self._tab:
+            return
+        if self._watch_phase and not reason.startswith(("search", "nav", "entropy", "ensure")):
+            await self.inject_visibility()
             return
         tag = f" ({reason})" if reason else ""
         await self.set_lifecycle_active()
         await self._activate_target()
         await self.inject_visibility()
-        await self._micro_mouse_wake()
+        if not self._watch_phase:
+            await self._micro_mouse_wake()
         self._log(f"[AntiSleep] Foreground wake{tag}")
 
     async def inject_visibility(self) -> bool:
@@ -161,6 +202,23 @@ class AntiSleepKeeper:
             pass
         return False
 
+    async def _resume_video_if_paused(self) -> None:
+        """When operator switches to another app, Chrome may pause video — resume via YT API."""
+        if not self._tab:
+            return
+        try:
+            result = await asyncio.wait_for(
+                self._tab.evaluate(RESUME_PAUSED_VIDEO_JS, return_by_value=True),
+                timeout=4.0,
+            )
+            val = result if isinstance(result, str) else getattr(result, "value", "")
+            if val in ("yt_resumed", "raw_resumed"):
+                self._resume_count += 1
+                if self._resume_count <= 5 or self._resume_count % 10 == 0:
+                    self._log(f"[AntiSleep] Background resume ({val}) #{self._resume_count}")
+        except Exception:
+            pass
+
     async def _micro_mouse_wake(self) -> None:
         if not self._tab:
             return
@@ -181,11 +239,23 @@ class AntiSleepKeeper:
                 if not self._running:
                     break
                 self._wake_count += 1
-                await self.set_lifecycle_active()
-                await self.inject_visibility()
-                await self._micro_mouse_wake()
-                if self._wake_count % 3 == 0:
-                    self._log(f"[AntiSleep] Keep-alive tick #{self._wake_count}")
+                if self._watch_phase:
+                    # Passive watch: visibility + resume only — no mouse curves, rare tab steal
+                    await self.inject_visibility()
+                    if self._wake_count % 4 == 0:
+                        await self.set_lifecycle_active()
+                    await self._resume_video_if_paused()
+                else:
+                    await self._activate_target()
+                    await self.set_lifecycle_active()
+                    await self.inject_visibility()
+                    await self._micro_mouse_wake()
+                    await self._resume_video_if_paused()
+                if self._wake_count % 6 == 0:
+                    self._log(
+                        f"[AntiSleep] Keep-alive tick #{self._wake_count} "
+                        f"(resumes={self._resume_count})"
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

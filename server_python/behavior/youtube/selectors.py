@@ -1,27 +1,61 @@
 """
-behavior.youtube.selectors — re-exports DESKTOP/MOBILE/JS_API from V2 master file.
+behavior.youtube.selectors — Re-exports DESKTOP/MOBILE/JS_API from V2 master file.
 All modules that do `from behavior.youtube.selectors import DESKTOP` get real V2 selectors.
+
+FIXED:
+  ✅ Added explicit warning log when V2 file not found (was silently falling back)
+     so developer knows selectors may be outdated.
 """
 from __future__ import annotations
-import sys
+
+import logging
 import os
+import sys
+
+log = logging.getLogger("mmb.yt_selectors")
 
 # V2 master file is in project root
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 _V2 = os.path.join(_ROOT, "MMB_YOUTUBE_SELECTORS_FINAL_V2.py")
 
+_v2_loaded = False
 if os.path.exists(_V2):
     import importlib.util
-    _spec = importlib.util.spec_from_file_location("_yt_sel_v2", _V2)
-    _mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
-    DESKTOP = getattr(_mod, "DESKTOP", {})
-    MOBILE = getattr(_mod, "MOBILE", {})
-    ANDROID_APP = getattr(_mod, "ANDROID_APP", {})
-    JS_API = getattr(_mod, "JS_API", {})
-    FOURTEEN_ACTIONS = getattr(_mod, "FOURTEEN_ACTIONS", {})
-else:
-    # Fallback inline critical selectors
+    try:
+        _spec = importlib.util.spec_from_file_location("_yt_sel_v2", _V2)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        DESKTOP          = getattr(_mod, "DESKTOP", {})
+        MOBILE           = getattr(_mod, "MOBILE", {})
+        ANDROID_APP      = getattr(_mod, "ANDROID_APP", {})
+        JS_API           = getattr(_mod, "JS_API", {})
+        FOURTEEN_ACTIONS = getattr(_mod, "FOURTEEN_ACTIONS", {})
+        log.debug("V2 selectors loaded from %s", _V2)
+        _v2_loaded = True
+    except Exception as exc:
+        # CRASH-PROOF FIX: the V2 file is meant to hold Python selector
+        # dicts, but it can get clobbered with raw pasted HTML/inspect
+        # output (this happened — line 31 had a bare <yt-formatted-string..>
+        # tag, causing `SyntaxError: invalid decimal literal` and crashing
+        # the ENTIRE backend on import). A selector file should never be
+        # able to take down the whole app — fall through to inline
+        # defaults below and just warn loudly so it gets fixed.
+        log.error(
+            "MMB_YOUTUBE_SELECTORS_FINAL_V2.py failed to load (%s: %s) — "
+            "the file is likely corrupted (e.g. raw HTML pasted into it "
+            "instead of valid Python). Falling back to inline selectors. "
+            "FIX THE FILE — current selectors may be outdated!",
+            type(exc).__name__, exc,
+        )
+
+if not _v2_loaded:
+    # FIX: Explicit warning — developer should know fallback is active
+    log.warning(
+        "MMB_YOUTUBE_SELECTORS_FINAL_V2.py not found at %s — "
+        "using inline fallback selectors (may be outdated). "
+        "Place V2 file in project root to use latest selectors.",
+        _V2
+    )
     DESKTOP = {
         "ad_skip_button": (
             'button.ytp-skip-ad-button', '.ytp-skip-ad-button',
@@ -32,9 +66,13 @@ else:
             'div[id^="skip-ad"]',
         ),
         "ad_detection_combined": (
-            '.html5-video-player.ad-showing', '.html5-video-player.ad-interrupting',
+            '.html5-video-player.ad-showing',
+            '.html5-video-player.ad-interrupting',
         ),
-        "ad_overlay_close": ('.ytp-ad-overlay-close-button', 'button[aria-label*="Close ad" i]'),
+        "ad_overlay_close": (
+            '.ytp-ad-overlay-close-button',
+            'button[aria-label*="Close ad" i]',
+        ),
         "like_button": (
             'button[aria-label*="like this video" i]',
             'like-button-view-model button',
@@ -47,6 +85,7 @@ else:
         "subscribe_button": (
             'button[aria-label^="Subscribe to" i]',
             'ytd-subscribe-button-renderer button',
+            'subscribe-button-view-model button',
         ),
         "bell_notification_button": (
             'button[aria-label*="notification setting" i]',
@@ -57,23 +96,72 @@ else:
         "comment_input_active_typing": ('#contenteditable-root[contenteditable="true"]',),
         "comment_submit_button": ('#submit-button button',),
         "autoplay_toggle_button": (
-            'button.ytp-autonav-toggle', '.ytp-autonav-toggle-button',
+            'button.ytp-autonav-toggle',
+            '.ytp-autonav-toggle-button',
             'button[aria-label*="Auto-play" i]',
         ),
-        "description_more_button": ('tp-yt-paper-button#expand', '#description-inline-expander #expand'),
+        "description_more_button": (
+            'tp-yt-paper-button#expand',
+            '#description-inline-expander #expand',
+        ),
         "player_root": ('#movie_player', '.html5-video-player'),
-        "volume_panel": ('.ytp-volume-panel[role="slider"]', '.ytp-volume-panel'),
+        "volume_panel": (
+            '.ytp-volume-panel[role="slider"]',
+            '.ytp-volume-panel',
+        ),
     }
-    MOBILE = {}
-    ANDROID_APP = {}
-    JS_API = {
-        "is_liked": "document.querySelector('like-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
-        "is_subscribed": "!!document.querySelector('button[aria-label*=\"notification setting\" i]')",
-        "is_disliked": "document.querySelector('dislike-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
-        "is_ad_playing": "!!(document.querySelector('#movie_player.ad-showing') || document.querySelector('#movie_player.ad-interrupting'))",
-        "can_skip_ad": "!!document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button-modern, button[id^=\"skip-button\"]')",
-        "get_volume": "Math.round((document.querySelector('video')?.volume ?? 1) * 100)",
+    MOBILE           = {}
+    ANDROID_APP      = {}
+    JS_API           = {
+        "is_liked":       "document.querySelector('like-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
+        "is_subscribed":  "!!document.querySelector('button[aria-label*=\"notification setting\" i]')",
+        "is_disliked":    "document.querySelector('dislike-button-view-model button')?.getAttribute('aria-pressed') === 'true'",
+        "is_ad_playing":  "!!(document.querySelector('#movie_player.ad-showing') || document.querySelector('#movie_player.ad-interrupting'))",
+        "can_skip_ad":    "!!document.querySelector('.ytp-skip-ad-button, .ytp-ad-skip-button-modern, button[id^=\"skip-button\"]')",
+        "get_volume":     "Math.round((document.querySelector('video')?.volume ?? 1) * 100)",
         "get_current_time": "(document.querySelector('video')?.currentTime ?? 0)",
-        "get_duration": "(document.querySelector('video')?.duration ?? 0)",
+        "get_duration":   "(document.querySelector('video')?.duration ?? 0)",
         "autoplay_is_on": "document.querySelector('.ytp-autonav-toggle-button')?.getAttribute('aria-checked') === 'true'",
     }
+    FOURTEEN_ACTIONS = {}
+
+
+# ── Self-healing selector overrides ──────────────────────────────────────────
+# Merge data/selector_overrides.json ON TOP of the base selectors so the healer
+# (and the Self-Healing Selectors UI page) can add/replace selectors WITHOUT
+# editing this file or the V2 master — that keeps the app un-break-able even if
+# YouTube changes its DOM. Override selectors are tried FIRST (prepended).
+# Re-callable: selector_healer calls this after saving a new override.
+import json as _json
+
+# Snapshot the base BEFORE any override is applied, so re-merges start clean.
+_BASE_DESKTOP: dict = {k: tuple(v) for k, v in DESKTOP.items()}
+_OVERRIDES_FILE = os.path.join(_ROOT, "data", "selector_overrides.json")
+
+
+def _apply_selector_overrides() -> None:
+    """Re-merge selector_overrides.json into DESKTOP (in place)."""
+    try:
+        merged = {k: tuple(v) for k, v in _BASE_DESKTOP.items()}
+        if os.path.exists(_OVERRIDES_FILE):
+            with open(_OVERRIDES_FILE, "r", encoding="utf-8") as f:
+                ov = _json.load(f)
+            if isinstance(ov, dict):
+                for key, sels in ov.items():
+                    if not isinstance(sels, list):
+                        continue
+                    extra = [str(s).strip() for s in sels if str(s).strip()]
+                    if not extra:
+                        continue
+                    base = list(merged.get(key, ()))
+                    merged[key] = tuple(dict.fromkeys(extra + base))  # overrides first
+                if ov:
+                    log.info("[Selectors] Applied selector overrides for %d key(s)", len(ov))
+        # Mutate in place so existing `from selectors import DESKTOP` refs update.
+        DESKTOP.clear()
+        DESKTOP.update(merged)
+    except Exception as exc:
+        log.warning("[Selectors] override merge failed: %s", exc)
+
+
+_apply_selector_overrides()

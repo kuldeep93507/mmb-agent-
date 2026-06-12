@@ -3,9 +3,11 @@ import type { Profile } from '../types';
 import { getGmailProfileIds } from './gmailProfileStore';
 
 export interface VideoTarget {
-  url:         string;
-  title:       string;
-  channelName: string;
+  url:            string;
+  title:          string;
+  channelName:    string;
+  /** Per-video traffic — overrides profile-level source when set */
+  trafficSource?: string;
 }
 
 export interface EngagementJobAction {
@@ -28,7 +30,14 @@ export interface EngagementProfileEntry {
   profileId:   string;
   profileName: string;
   browserType: string;
-  source:      'notification' | 'search' | 'direct' | 'homepage';
+  source:
+    | 'notification'
+    | 'search'
+    | 'direct'
+    | 'homepage'
+    | 'google'
+    | 'bing'
+    | 'channel_discovery';
   delayMs:     number;
   actions:     EngagementJobAction;
   videos:      VideoTarget[];   // one entry per channel/video → one tab each
